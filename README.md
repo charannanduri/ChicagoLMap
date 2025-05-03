@@ -11,6 +11,10 @@ A real-time visualization of Chicago Transit Authority (CTA) train positions usi
 - 15-second auto-refresh for latest train positions
 - Interactive map with train markers
 
+## Known Issues
+
+*   **Orange and Pink Lines:** Fetching data for the Orange (`Org`) and Pink (`Pink`) lines is currently unreliable due to inconsistencies in how the CTA API names these routes in the response XML versus the required request parameters. The `cta_data.py` script attempts to handle this, but it may not always succeed.
+
 ## Setup and Installation
 
 1. Clone this repository
