@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTA Train Tracker (Python/Flask)</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+        #map { height: 100vh; width: 100vw; z-index: 0; }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000; /* Ensure controls are above the map */
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        #controls button {
+            display: block;
+            margin-bottom: 5px;
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #f8f8f8;
+            cursor: pointer;
+            min-width: 80px; /* Ensure buttons have some width */
+            text-align: center;
+        }
+        #controls button:hover {
+            background-color: #eee;
+        }
+        #controls button.active {
+            background-color: #ddd;
+            border-color: #aaa;
+            font-weight: bold;
+        }
+        #controls button:last-child {
+            margin-bottom: 0;
+        }
+        /* Add styles for different train lines later */
+        .train-marker-red { /* Example */
+            /* background-color: red; */
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="controls">
+    <h4>Select Line:</h4>
+    <button data-route="red" class="route-button active">Red</button>
+    <button data-route="blue" class="route-button">Blue</button>
+    <button data-route="g" class="route-button">Green</button>
+    <button data-route="brn" class="route-button">Brown</button>
+    <button data-route="o" class="route-button">Orange</button>
+     <button data-route="p" class="route-button">Purple</button>
+     <button data-route="pnk" class="route-button">Pink</button>
+     <button data-route="y" class="route-button">Yellow</button>
+</div>
+
+<script>
+    // --- Map Initialization ---
+    const map = L.map('map').setView([41.8781, -87.6298], 11); // Centered on Chicago
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    // Layer group to hold train markers
+    const trainLayer = L.layerGroup().addTo(map);
+    let currentIntervalId = null; // To store the ID of the interval timer
+
+    // --- Data Fetching and Map Update ---
+    const API_BASE_URL = '/api/trains'; // Base URL for our Flask API
+    let currentRoute = 'red'; // Start with the red line, but mutable
+    const UPDATE_INTERVAL_MS = 15000; // Update map every 15 seconds
+
+    async function updateMap() {
+        console.log(`Fetching train data for route: ${currentRoute}...`);
+        const apiUrl = `${API_BASE_URL}/${currentRoute}`;
+
+        try {
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                // Handle specific errors like 404 (invalid route in backend) or 500 (server error)
+                let errorMsg = `HTTP error! status: ${response.status}`;
+                if (response.status === 404) {
+                     try {
+                         const errData = await response.json();
+                         errorMsg = errData.description || "Route not found or invalid.";
+                     } catch(e) { /* Ignore if response is not JSON */ }
+                 }
+                throw new Error(errorMsg);
+            }
+            const data = await response.json(); // Expecting { route: "...", trains: [...] }
+
+            // Clear existing markers before adding new ones for the current route
+            trainLayer.clearLayers();
+
+            if (data.trains && data.trains.length > 0) {
+                console.log(`Processing ${data.trains.length} trains for route ${data.route}.`);
+                data.trains.forEach(train => {
+                    if (train.lat != null && train.lon != null) {
+                        // TODO: Add custom icons based on route/heading later
+                        const marker = L.marker([train.lat, train.lon]);
+                        marker.bindPopup(`<b>${data.route.toUpperCase()} Line Train</b><br>Heading: ${train.heading}&deg;`);
+                        trainLayer.addLayer(marker);
+                    } else {
+                        console.warn("Skipping train with null lat/lon:", train);
+                    }
+                });
+            } else {
+                console.log(`No train data received for route ${data.route || currentRoute}.`);
+                 // Optional: Display a message on the map if no trains found?
+                 // L.popup().setLatLng(map.getCenter()).setContent(`No active trains found for ${currentRoute.toUpperCase()} line.` ).openOn(map);
+            }
+
+        } catch (error) {
+            console.error(`Failed to fetch or update train data for ${currentRoute}:`, error);
+            // Display error to user (simple example)
+            trainLayer.clearLayers(); // Clear potentially stale markers
+            // Consider a more robust error display mechanism
+            alert(`Error fetching data for ${currentRoute.toUpperCase()} line: ${error.message}`);
+        }
+    }
+
+    // --- Route Selection Logic ---
+    const routeButtons = document.querySelectorAll('.route-button');
+
+    function setActiveButton(selectedRoute) {
+        routeButtons.forEach(button => {
+            if (button.dataset.route === selectedRoute) {
+                button.classList.add('active');
+            } else {
+                button.classList.remove('active');
+            }
+        });
+    }
+
+    routeButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const selectedRoute = button.dataset.route;
+            if (selectedRoute !== currentRoute) {
+                console.log(`Route changed to: ${selectedRoute}`);
+                currentRoute = selectedRoute;
+                setActiveButton(selectedRoute);
+                updateMap(); // Fetch data immediately for the new route
+                // Restart the interval timer to ensure it uses the new route
+                if (currentIntervalId) {
+                    clearInterval(currentIntervalId);
+                }
+                currentIntervalId = setInterval(updateMap, UPDATE_INTERVAL_MS);
+            }
+        });
+    });
+
+    // --- Initial Load and Interval ---
+    setActiveButton(currentRoute); // Set the default button active
+    updateMap(); // Initial map update for the default route
+    currentIntervalId = setInterval(updateMap, UPDATE_INTERVAL_MS); // Set interval for periodic updates
+
+
+</script>
+
+</body>
+</html> 
