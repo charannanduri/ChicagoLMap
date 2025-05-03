@@ -30,16 +30,24 @@ A real-time visualization of Chicago Transit Authority (CTA) train positions usi
    
    You'll need to obtain an API key from the [CTA Developer website](https://www.transitchicago.com/developers/traintracker/).
    
-   Set the API key as an environment variable:
+   There are three ways to provide your API key:
+   
+   a) Create a file named `api_key.txt` in the project root with just your API key:
+   ```
+   your_api_key_here
+   ```
+   
+   b) Set the API key as an environment variable:
    ```
    export CTA_API_KEY="your_api_key_here"  # On Windows: set CTA_API_KEY=your_api_key_here
    ```
    
-   Alternatively, for development, you can create a `.env` file in the project root with:
+   c) For development, you can create a `.env` file in the project root with:
    ```
    CTA_API_KEY=your_api_key_here
    ```
-   (Note: The `.env` file is ignored by git for security)
+   
+   Note: Both the `.env` file and `api_key.txt` are ignored by git for security.
 
 4. Run the application
    ```

@@ -19,8 +19,17 @@ app = Flask(__name__)
 # or a configuration file, not hardcode them directly in the source.
 CTA_API_KEY = os.environ.get("CTA_API_KEY", "")
 
+# Try to read API key from file if environment variable is not set
+if not CTA_API_KEY and os.path.exists('api_key.txt'):
+    try:
+        with open('api_key.txt', 'r') as f:
+            CTA_API_KEY = f.read().strip()
+        logging.info("Successfully loaded API key from api_key.txt")
+    except Exception as e:
+        logging.error(f"Error reading API key from file: {e}")
+
 if not CTA_API_KEY:
-    logging.warning("CTA API Key not found. Please set the CTA_API_KEY environment variable.")
+    logging.warning("CTA API Key not found. Please set the CTA_API_KEY environment variable or create an api_key.txt file.")
     # You might want to exit or handle this more gracefully depending on requirements
     # For now, we'll allow the app to run but API calls will likely fail.
 

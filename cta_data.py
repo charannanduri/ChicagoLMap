@@ -83,9 +83,18 @@ if __name__ == "__main__":
     import os
     # Get the API key from environment variable
     cta_api_key = os.environ.get("CTA_API_KEY", "")
+    
+    # Try to read API key from file if environment variable is not set
+    if not cta_api_key and os.path.exists('api_key.txt'):
+        try:
+            with open('api_key.txt', 'r') as f:
+                cta_api_key = f.read().strip()
+            print("Successfully loaded API key from api_key.txt")
+        except Exception as e:
+            print(f"Error reading API key from file: {e}")
 
     if not cta_api_key:
-        print("Please set the CTA_API_KEY environment variable with your CTA API key.")
+        print("Please set the CTA_API_KEY environment variable or create an api_key.txt file with your CTA API key.")
     else:
         red_line_trains = get_train_positions(cta_api_key, 'red')
         if red_line_trains:
