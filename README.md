@@ -2,7 +2,7 @@
 
 A real-time visualization of Chicago Transit Authority (CTA) train positions using the CTA Train Tracker API.
 
-![Chicago L Map](https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/Chicago_L_diagram_sb.svg/800px-Chicago_L_diagram_sb.svg.png)
+
 
 ## Features
 
