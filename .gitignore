@@ -17,6 +17,9 @@ api_key.txt
 # Claude Code harness config (machine-specific)
 .claude/
 
+# Firmware secrets (WiFi credentials, backend host)
+firmware/**/secrets.h
+
 # OS specific files
 .DS_Store
 .DS_Store?

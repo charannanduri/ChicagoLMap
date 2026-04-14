@@ -1,3 +1,5 @@
+from __future__ import annotations  # allow `str | None` style hints on Python 3.9
+
 import requests
 import xml.etree.ElementTree as ET
 import logging
@@ -6,6 +8,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 CTA_API_BASE_URL = "http://lapi.transitchicago.com/api/1.0/ttpositions.aspx"
+CTA_ARRIVALS_URL = "http://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
 
 def get_train_positions(api_key: str, route: str) -> list[dict]:
     """
@@ -99,10 +102,38 @@ def get_train_positions(api_key: str, route: str) -> list[dict]:
                 lat = float(train_node.findtext('lat'))
                 lon = float(train_node.findtext('lon'))
                 heading = int(train_node.findtext('heading'))
-                trains.append({'lat': lat, 'lon': lon, 'heading': heading})
             except (ValueError, TypeError) as e:
-                logging.warning(f"Could not parse data for a train on route '{route}' (API ID: '{api_rt_id}'): {e}. Skipping train.")
-                continue # Skip this train if data is invalid
+                logging.warning(f"Could not parse lat/lon/heading for a train on route '{route}' (API ID: '{api_rt_id}'): {e}. Skipping train.")
+                continue # Skip this train if core position data is invalid
+
+            # Optional enrichment fields used by the hardware / station-status endpoints.
+            # Parsed defensively — any individual field being absent or malformed
+            # should not drop the whole train from the list.
+            def _opt_int(tag):
+                raw = train_node.findtext(tag)
+                try:
+                    return int(raw) if raw is not None else None
+                except (ValueError, TypeError):
+                    return None
+
+            trains.append({
+                'lat': lat,
+                'lon': lon,
+                'heading': heading,
+                # Station the train is currently approaching or stopped at.
+                'next_sta_id': _opt_int('nextStaId'),
+                'next_sta_name': train_node.findtext('nextStaNm'),
+                # isApp == 1 means the train is "approaching" (effectively at) the station.
+                'is_approaching': _opt_int('isApp') == 1,
+                'is_delayed': _opt_int('isDly') == 1,
+                # Destination / direction signals.
+                'dest_sta_id': _opt_int('destSt'),
+                'dest_name': train_node.findtext('destNm'),
+                # trDr is 1 or 5 depending on the line; see CTA docs.
+                'direction_code': _opt_int('trDr'),
+                # Predicted arrival time at nextStaId (naive local "YYYYMMDD HH:MM:SS" from the API).
+                'arrival_time': train_node.findtext('arrT'),
+            })
 
         logging.info(f"Successfully fetched {len(trains)} trains for route '{route}' (API ID: '{api_rt_id}').")
 
@@ -119,6 +150,79 @@ def get_train_positions(api_key: str, route: str) -> list[dict]:
         return []
 
     return trains
+
+def get_station_arrivals(api_key: str, mapid: int, route: str | None = None, max_results: int = 4) -> list[dict]:
+    """
+    Fetches next-arrival predictions for a CTA parent station (mapid).
+
+    Feeds the hardware e-paper display that shows "next train at my station".
+
+    Args:
+        api_key: Your registered CTA API key.
+        mapid: CTA parent station ID (covers both directions at that station).
+        route: Optional route filter (user-friendly, e.g. 'red'). When set,
+               only predictions for that route are returned.
+        max_results: Upper bound on predictions returned (CTA `max` param).
+
+    Returns:
+        A list of dicts with keys: route, direction_code, dest_name,
+        station_name, eta_minutes, is_approaching, arrival_time. Empty list on error.
+    """
+    params = {'key': api_key, 'mapid': mapid, 'max': max_results}
+    if route:
+        # Reuse the API route-id mapping from the positions fetcher to stay consistent.
+        api_rt = {
+            'red': 'Red', 'blue': 'Blue', 'brn': 'Brn', 'brown': 'Brn',
+            'g': 'G', 'green': 'G', 'org': 'Org', 'orange': 'Org', 'o': 'Org',
+            'p': 'P', 'purple': 'P', 'pink': 'Pink', 'pnk': 'Pink',
+            'y': 'Y', 'yellow': 'Y',
+        }.get(route.lower())
+        if api_rt:
+            params['rt'] = api_rt
+
+    predictions = []
+    try:
+        response = requests.get(CTA_ARRIVALS_URL, params=params, timeout=10)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+
+        error_node = root.find('errCd')
+        if error_node is not None and error_node.text and error_node.text != '0':
+            err_msg = root.findtext('errNm', 'Unknown API error')
+            logging.error(f"CTA arrivals API error for mapid={mapid}: {err_msg}")
+            return []
+
+        from datetime import datetime
+        now = datetime.now()
+        for eta in root.findall('eta'):
+            arr_t_raw = eta.findtext('arrT')
+            eta_minutes = None
+            if arr_t_raw:
+                try:
+                    # CTA formats arrT as "YYYYMMDD HH:MM:SS" (space, not T).
+                    arr_dt = datetime.strptime(arr_t_raw, "%Y%m%d %H:%M:%S")
+                    eta_minutes = max(0, int((arr_dt - now).total_seconds() // 60))
+                except ValueError:
+                    pass
+            predictions.append({
+                'route': eta.findtext('rt'),
+                'station_name': eta.findtext('staNm'),
+                'dest_name': eta.findtext('destNm'),
+                # trDr: 1 or 5; mapping to cardinal direction is route-dependent.
+                'direction_code': int(eta.findtext('trDr') or 0) or None,
+                'eta_minutes': eta_minutes,
+                'is_approaching': eta.findtext('isApp') == '1',
+                'arrival_time': arr_t_raw,
+            })
+    except requests.exceptions.RequestException as e:
+        logging.error(f"HTTP request failed for arrivals at mapid={mapid}: {e}")
+        return []
+    except ET.ParseError as e:
+        logging.error(f"Failed to parse XML from arrivals endpoint for mapid={mapid}: {e}")
+        return []
+
+    return predictions
+
 
 # Example usage (optional, can be run directly)
 if __name__ == "__main__":

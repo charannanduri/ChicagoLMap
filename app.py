@@ -1,10 +1,12 @@
+from __future__ import annotations  # allow `str | None` style hints on Python 3.9
+
 import os
 import logging
 import json # Added for loading GeoJSON
 import zipfile # For reading KMZ
 from io import BytesIO # For reading zip content in memory
-from flask import Flask, jsonify, abort, send_from_directory
-from cta_data import get_train_positions # Import our data fetching function
+from flask import Flask, jsonify, abort, send_from_directory, request
+from cta_data import get_train_positions, get_station_arrivals # Import our data fetching functions
 from fastkml import kml # KML parsing library
 from fastkml.features import Placemark # Placemark lives here in fastkml >= 1.0
 from shapely.geometry import mapping # To convert geometry to GeoJSON compatible format
@@ -240,6 +242,100 @@ def api_get_geojson_stops(route):
         abort(500, description=f"Error processing KML data for stops on route '{route_lower}'. Check server logs.")
 
     return jsonify(geojson_result)
+
+# --- Hardware-facing endpoints --- (compact JSON for the ESP32 companion device)
+#
+# These endpoints exist to feed the planned physical PCB with RGB LEDs per
+# station and an e-paper next-arrival display. See docs/HARDWARE.md for the
+# overall design. They're deliberately simple and poll-friendly so an ESP32
+# can hit them on a ~10s cadence.
+
+# For the PoC we only expose Red Line. Direction buckets are keyed by the
+# destination terminal. Expand this table as more lines come online.
+ROUTE_DIRECTION_BUCKETS = {
+    'red': {
+        'north': {'Howard'},
+        'south': {'95th/Dan Ryan'},
+    },
+}
+
+def _bucket_direction(route: str, dest_name: str | None) -> str | None:
+    """Map a CTA destination name to a cardinal direction bucket for the given route."""
+    if not dest_name:
+        return None
+    buckets = ROUTE_DIRECTION_BUCKETS.get(route, {})
+    for direction, dest_set in buckets.items():
+        if dest_name in dest_set:
+            return direction
+    return None
+
+
+@app.route('/api/stations/<route>/status', methods=['GET'])
+def api_station_status(route):
+    """Per-station, per-direction occupancy for the LED board.
+
+    A direction at a station is "lit" when there's at least one train on that
+    route currently approaching or stopped at that station heading that way.
+    """
+    route_lower = route.lower()
+    if route_lower not in ALLOWED_ROUTES:
+        abort(404, description=f"Invalid route. Allowed: {sorted(ALLOWED_ROUTES)}")
+    if route_lower not in ROUTE_DIRECTION_BUCKETS:
+        abort(501, description=f"Station status not yet implemented for route '{route_lower}'. "
+                                f"Supported: {sorted(ROUTE_DIRECTION_BUCKETS)}")
+    if not CTA_API_KEY:
+        abort(500, description="Server configuration error: API key missing.")
+
+    trains = get_train_positions(CTA_API_KEY, route_lower)
+
+    # Build {station_name: {direction: bool}}
+    # Station names come from trains' `next_sta_name`; the LED board already knows
+    # the full static station list from its own map, so we only need to report
+    # stations with activity. That keeps the payload tiny.
+    occupied: dict[str, dict[str, bool]] = {}
+    for t in trains:
+        station = t.get('next_sta_name')
+        if not station:
+            continue
+        # Only count trains that are effectively at the station (approaching).
+        # Trains further out will show up on subsequent polls as they get closer.
+        if not t.get('is_approaching'):
+            continue
+        direction = _bucket_direction(route_lower, t.get('dest_name'))
+        if direction is None:
+            continue
+        occupied.setdefault(station, {'north': False, 'south': False})
+        occupied[station][direction] = True
+
+    stations = [
+        {'name': name, 'north': dirs['north'], 'south': dirs['south']}
+        for name, dirs in sorted(occupied.items())
+    ]
+
+    from datetime import datetime, timezone
+    return jsonify({
+        'route': route_lower,
+        'as_of': datetime.now(timezone.utc).isoformat(),
+        'stations': stations,
+    })
+
+
+@app.route('/api/station/<int:mapid>/next', methods=['GET'])
+def api_station_next(mapid):
+    """Next-arrival predictions for a single parent station, used by the e-paper."""
+    if not CTA_API_KEY:
+        abort(500, description="Server configuration error: API key missing.")
+
+    route = request.args.get('route')  # optional filter
+    predictions = get_station_arrivals(CTA_API_KEY, mapid, route=route)
+
+    station_name = predictions[0]['station_name'] if predictions else None
+    return jsonify({
+        'mapid': mapid,
+        'station_name': station_name,
+        'predictions': predictions,
+    })
+
 
 # --- Serve Frontend ---
 @app.route('/')
