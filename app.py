@@ -6,6 +6,7 @@ from io import BytesIO # For reading zip content in memory
 from flask import Flask, jsonify, abort, send_from_directory
 from cta_data import get_train_positions # Import our data fetching function
 from fastkml import kml # KML parsing library
+from fastkml.features import Placemark # Placemark lives here in fastkml >= 1.0
 from shapely.geometry import mapping # To convert geometry to GeoJSON compatible format
 from bs4 import BeautifulSoup # Added HTML parser
 
@@ -77,32 +78,16 @@ def load_and_filter_kml_stops(kml_content: bytes, route_value: str):
     """Loads KML content, filters Placemarks by route using description HTML, returns GeoJSON FeatureCollection."""
     features = []
     try:
-        k = kml.KML()
-        k.from_string(kml_content)
+        # fastkml >= 1.0: parse from a file-like object; `from_string` silently yields no features.
+        k = kml.KML.parse(BytesIO(kml_content))
 
-        all_placemarks = []
-        # Log the top-level features
-        logging.debug(f"Top-level features count: {len(k.features)}")
-        
-        # First, try to get all placemarks directly
-        for feature in k.features():
-            logging.debug(f"Found top-level feature: {type(feature).__name__}")
-            if isinstance(feature, kml.Placemark):
-                logging.debug(f"Found top-level Placemark: {feature.name}")
-                all_placemarks.append(feature)
-            elif hasattr(feature, 'features'):
-                logging.debug(f"Found container with {len(feature.features())} nested features")
-                for nested in feature.features():
-                    if isinstance(nested, kml.Placemark):
-                        logging.debug(f"Found nested Placemark: {nested.name}")
-                        all_placemarks.append(nested)
-                    elif hasattr(nested, 'features'):
-                        logging.debug(f"Found deeper container with {len(nested.features())} features")
-                        for deep in nested.features():
-                            if isinstance(deep, kml.Placemark):
-                                logging.debug(f"Found deep Placemark: {deep.name}")
-                                all_placemarks.append(deep)
+        # Recursively walk the KML tree to collect every Placemark, regardless of nesting depth.
+        def walk(node):
+            yield node
+            for child in (node.features if hasattr(node, 'features') else []) or []:
+                yield from walk(child)
 
+        all_placemarks = [f for f in walk(k) if isinstance(f, Placemark)]
         logging.info(f"Found {len(all_placemarks)} total placemarks after parsing KML structure.")
 
         # Use BeautifulSoup to parse description and filter
@@ -218,7 +203,7 @@ def api_get_geojson_route(route):
 def api_get_geojson_stops(route):
     """Serves GeoJSON points for stops on a specific route, extracted from KMZ."""
     route_lower = route.lower()
-    kmz_filename = 'CTA_railStations.kmz'
+    kmz_filename = 'CTA_RailStations.kmz'
     kml_doc_name = 'doc.kml' # Common default name within KMZ
 
     if not os.path.exists(kmz_filename):

@@ -11,7 +11,11 @@ ENV/
 # Environment variables
 .env
 *.env
-api_key.txt  # API key file
+# API key file (git gitignore does not support inline comments on patterns)
+api_key.txt
+
+# Claude Code harness config (machine-specific)
+.claude/
 
 # OS specific files
 .DS_Store

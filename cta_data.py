@@ -13,13 +13,43 @@ def get_train_positions(api_key: str, route: str) -> list[dict]:
 
     Args:
         api_key: Your registered CTA API key.
-        route: The route identifier (e.g., 'red', 'blue', 'g', 'brn').
+        route: The user-friendly route identifier (e.g., 'red', 'blue', 'orange', 'purple', 'pink', 'yellow').
 
     Returns:
         A list of dictionaries, where each dictionary represents a train
         with 'lat', 'lon', and 'heading' keys. Returns an empty list on error.
     """
-    params = {'key': api_key, 'rt': route}
+    # Map user-friendly names to the API's route identifiers and expected XML attribute names
+    # Format: input_key: (api_rt_value, xml_name_value)
+    route_details = {
+        'red':    ('Red',  'red'),  # API uses Red, XML uses red
+        'blue':   ('Blue', 'blue'), # API uses Blue, XML uses blue
+        'brn':    ('Brn',  'brn'),  # API uses Brn, XML uses brn
+        'brown':  ('Brn',  'brn'),
+        'g':      ('G',    'g'),    # API uses G, XML uses g
+        'green':  ('G',    'g'),
+        'org':    ('Org',  'Org'),  # API uses Org, XML likely uses Org
+        'orange': ('Org',  'Org'),
+        'o':      ('Org',  'Org'),
+        'p':      ('P',    'p'),    # API uses P, XML uses p
+        'purple': ('P',    'p'),
+        'pink':   ('Pink', 'Pink'), # API uses Pink, XML likely uses Pink
+        'pnk':    ('Pink', 'Pink'),
+        'y':      ('Y',    'y'),    # API uses Y, XML uses y
+        'yellow': ('Y',    'y')
+    }
+
+    # Get the API route identifier and expected XML name
+    input_route_lower = route.lower()
+    details = route_details.get(input_route_lower)
+
+    if not details:
+        logging.error(f"Unknown or unsupported route provided: '{route}'")
+        return []
+
+    api_rt_id, xml_name_id = details # Unpack the tuple
+
+    params = {'key': api_key, 'rt': api_rt_id} # Use the API rt value for the request
     trains = []
 
     try:
@@ -32,6 +62,7 @@ def get_train_positions(api_key: str, route: str) -> list[dict]:
             return []
 
         xml_content = response.content
+        logging.debug(f"Raw XML Response for route '{route}':\n{xml_content.decode('utf-8', errors='ignore')}")
         root = ET.fromstring(xml_content)
 
         # Check for API errors within the XML response
@@ -41,41 +72,52 @@ def get_train_positions(api_key: str, route: str) -> list[dict]:
             logging.error(f"CTA API Error for route '{route}': {error_msg}")
             return []
 
-        # Find all train elements within the specified route
-        # The structure is <ctatt><route name='...'><train>...</train></route></ctatt>
-        route_node = root.find(f".//route[@name='{route}']")
+        # Find the specific route node based on the expected XML name identifier
+        route_node = root.find(f".//route[@name='{xml_name_id}']")
+
+        # If the route node doesn't exist, it means no data for this specific route (or API structure changed)
         if route_node is None:
-            # It's possible the API returns an empty <ctatt> if the key is valid but no trains are running/found for that route.
-            # Let's check if any route node exists at all.
+            # Check if *any* route nodes exist to differentiate between no data and bad response
             all_route_nodes = root.findall('.//route')
             if not all_route_nodes:
-                logging.warning(f"No <route> elements found in the response for route '{route}'.")
+                logging.warning(f"No <route> elements found in the response for route request '{route}' (API ID: '{api_rt_id}'). API might be down or response format changed.")
             else:
-                logging.warning(f"Route node for '{route}' specifically not found, though other routes might exist.")
-            return [] # Return empty list if the specific route node isn't found
+                # Log the names of routes that *were* found to help debug XML inconsistencies
+                found_route_names = [r.get('name') for r in all_route_nodes if r.get('name')]
+                logging.info(f"No data currently available for route '{route}' (API ID: '{api_rt_id}'). Route node with name '{xml_name_id}' not found in response. Found routes: {found_route_names}")
+            return []
 
-        for train_node in route_node.findall('train'):
+        # Find train elements *within* the specific route node
+        train_nodes = route_node.findall('train')
+        if not train_nodes:
+            logging.info(f"No active trains found on route '{route}' (API ID: '{api_rt_id}') at this time.")
+            return [] # No trains currently running on this line
+
+        for train_node in train_nodes:
+            # No need to check train_node.findtext('rt') here, as we are already inside the correct route node
             try:
                 lat = float(train_node.findtext('lat'))
                 lon = float(train_node.findtext('lon'))
                 heading = int(train_node.findtext('heading'))
-                # You could extract more info here, e.g., run number ('rn'), destination ('destNm')
                 trains.append({'lat': lat, 'lon': lon, 'heading': heading})
             except (ValueError, TypeError) as e:
-                logging.warning(f"Could not parse data for a train on route '{route}': {e}. Skipping train.")
+                logging.warning(f"Could not parse data for a train on route '{route}' (API ID: '{api_rt_id}'): {e}. Skipping train.")
                 continue # Skip this train if data is invalid
 
+        logging.info(f"Successfully fetched {len(trains)} trains for route '{route}' (API ID: '{api_rt_id}').")
+
     except requests.exceptions.RequestException as e:
-        logging.error(f"HTTP request failed for route '{route}': {e}")
+        logging.error(f"HTTP request failed for route '{route}' (API ID: '{api_rt_id}'): {e}")
         return []
     except ET.ParseError as e:
-        logging.error(f"Failed to parse XML for route '{route}': {e}")
+        # Include part of the response for easier debugging if possible
+        raw_content_snippet = response.content[:500].decode('utf-8', errors='ignore') if response and response.content else "N/A"
+        logging.error(f"Failed to parse XML for route '{route}' (API ID: '{api_rt_id}'): {e}. Response snippet: {raw_content_snippet}")
         return []
     except Exception as e: # Catch any other unexpected errors
-        logging.error(f"An unexpected error occurred for route '{route}': {e}")
+        logging.error(f"An unexpected error occurred for route '{route}' (API ID: '{api_rt_id}'): {e}")
         return []
 
-    logging.info(f"Successfully fetched {len(trains)} trains for route '{route}'.")
     return trains
 
 # Example usage (optional, can be run directly)
