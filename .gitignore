@@ -40,18 +40,24 @@ dist/
 build/
 *.egg-info/
 
-# ML model artifacts (large binary files)
-ml_models/
-*.joblib
+# CTA delay predictor — ML artifacts
+cta-delay-predictor/ml_models/
+cta-delay-predictor/**/*.joblib
 
-# Node / Next.js
-frontend/node_modules/
-frontend/.next/
-frontend/out/
+# CTA delay predictor — Node / Next.js
+cta-delay-predictor/frontend/node_modules/
+cta-delay-predictor/frontend/.next/
+cta-delay-predictor/frontend/out/
+
+# CTA delay predictor — environment
+cta-delay-predictor/.env
 
 # Python cache
 __pycache__/
 *.pyc
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
 
 # Parquet / CSV data exports
 *.parquet
