@@ -38,4 +38,21 @@ Thumbs.db
 # Distribution / packaging
 dist/
 build/
-*.egg-info/ 
+*.egg-info/
+
+# ML model artifacts (large binary files)
+ml_models/
+*.joblib
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Parquet / CSV data exports
+*.parquet
+*.csv
