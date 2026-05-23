@@ -27,7 +27,7 @@ from sklearn.metrics import (
     accuracy_score,
     f1_score,
     mean_absolute_error,
-    mean_squared_error,
+    root_mean_squared_error,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -106,11 +106,22 @@ class BaselineMedianModel:
         return np.array(df.apply(_lookup, axis=1))
 
 
+MIN_ROWS = 500
+
+
 def train() -> None:
     logger.info("Loading labeled features…")
     df_raw = _load_data()
     df = _prep(df_raw)
     logger.info("Loaded %d labeled rows", len(df))
+
+    if len(df) < MIN_ROWS:
+        logger.warning(
+            "Only %d labeled rows — need at least %d to train. "
+            "Run ETL and collect more data first.",
+            len(df), MIN_ROWS,
+        )
+        return
 
     train_df, test_df = _time_split(df)
     logger.info("Train: %d rows, Test: %d rows", len(train_df), len(test_df))
@@ -130,7 +141,7 @@ def train() -> None:
 
     def _reg_metrics(name: str, y_true: pd.Series, y_pred: np.ndarray) -> None:
         mae = mean_absolute_error(y_true, y_pred)
-        rmse = mean_squared_error(y_true, y_pred, squared=False)
+        rmse = root_mean_squared_error(y_true, y_pred)
         logger.info("[%s] MAE=%.3f min  RMSE=%.3f min", name, mae, rmse)
 
     def _cls_metrics(name: str, y_true: pd.Series, y_pred: np.ndarray) -> None:
@@ -191,7 +202,6 @@ def train() -> None:
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        use_label_encoder=False,
         eval_metric="mlogloss",
         random_state=42,
         n_jobs=-1,

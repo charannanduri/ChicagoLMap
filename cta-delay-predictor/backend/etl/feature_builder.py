@@ -60,6 +60,15 @@ def build_features(lookback_hours: int = _LOOKBACK_HOURS) -> int:
             .all()
         )
 
+        # Headway lookup: (snapshot_time, station_id, direction) → sorted arr_t list
+        headway_lookup: dict[tuple, list] = {}
+        for snap in snaps:
+            if snap.arr_t is not None:
+                key = (snap.snapshot_time, snap.station_id, snap.direction or "")
+                headway_lookup.setdefault(key, []).append(snap.arr_t)
+        for key in headway_lookup:
+            headway_lookup[key].sort()
+
         # Build previous-ETA lookup: (run_number, station_id) → [arr_t_minutes, ...]
         history: dict[tuple[str, str], list[float]] = {}
 
@@ -119,6 +128,18 @@ def build_features(lookback_hours: int = _LOOKBACK_HOURS) -> int:
 
             direction_code = int(snap.direction) if snap.direction and snap.direction.isdigit() else None
 
+            # Headway from sorted arr_t list for this snapshot+station+direction
+            hw_before: float | None = None
+            hw_after: float | None = None
+            hw_key = (snap.snapshot_time, station, snap.direction or "")
+            arr_ts = headway_lookup.get(hw_key, [])
+            if snap.arr_t in arr_ts:
+                idx = arr_ts.index(snap.arr_t)
+                if idx > 0:
+                    hw_before = round((snap.arr_t - arr_ts[idx - 1]).total_seconds() / 60, 2)
+                if idx < len(arr_ts) - 1:
+                    hw_after = round((arr_ts[idx + 1] - snap.arr_t).total_seconds() / 60, 2)
+
             db.add(
                 ModelFeature(
                     run_number=run,
@@ -146,6 +167,8 @@ def build_features(lookback_hours: int = _LOOKBACK_HOURS) -> int:
                     ) if snap.prdt else None,
                     eta_delta_1_min=eta_delta_1,
                     eta_delta_2_min=eta_delta_2,
+                    headway_before_min=hw_before,
+                    headway_after_min=hw_after,
                     delay_minutes=delay_min,
                     delay_status=status,
                 )

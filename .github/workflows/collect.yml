@@ -28,3 +28,15 @@ jobs:
           CTA_TRAIN_TRACKER_KEY: ${{ secrets.CTA_TRAIN_TRACKER_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m backend.collector.collect_once
+
+      - name: Infer actual arrivals from snapshots
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.arrival_inference
+
+      - name: Build model features
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.feature_builder
