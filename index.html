@@ -3,170 +3,691 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CTA Train Tracker (Python/Flask)</title>
+    <title>Chicago L — Live Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <style>
-        body { margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+            background: #07090f;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
         #map { height: 100vh; width: 100vw; z-index: 0; }
+
+        /* ── Liquid Glass base ─────────────────────────────────────────────── */
+        .glass {
+            position: relative;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.07);
+            backdrop-filter: blur(28px) saturate(200%) brightness(1.05);
+            -webkit-backdrop-filter: blur(28px) saturate(200%) brightness(1.05);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow:
+                0 10px 40px rgba(0, 0, 0, 0.45),
+                0 2px 8px  rgba(0, 0, 0, 0.25),
+                inset 0 1px 0 rgba(255, 255, 255, 0.32),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+        }
+        .glass::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: linear-gradient(140deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 35%, transparent 65%);
+            pointer-events: none;
+            z-index: 1;
+        }
+        .glass::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 48%;
+            border-radius: inherit;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.07), transparent);
+            pointer-events: none;
+            z-index: 1;
+        }
+        .glass > * { position: relative; z-index: 2; }
+
+        /* ── Title badge ───────────────────────────────────────────────────── */
+        #title-badge {
+            position: absolute;
+            top: 20px; left: 20px;
+            z-index: 1000;
+            padding: 12px 20px;
+            border-radius: 20px;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+        #title-badge .t-main { font-size: 17px; font-weight: 700; letter-spacing: -0.03em; color: rgba(255,255,255,0.95); }
+        #title-badge .t-sub  { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.38); letter-spacing: 0.01em; }
+
+        /* ── Controls panel ────────────────────────────────────────────────── */
         #controls {
             position: absolute;
-            top: 10px;
-            right: 10px;
-            background-color: rgba(255, 255, 255, 0.8);
-            padding: 10px;
-            border-radius: 5px;
-            z-index: 1000; /* Ensure controls are above the map */
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            top: 20px; right: 20px;
+            z-index: 1000;
+            padding: 14px 12px 10px;
+            border-radius: 24px;
+            min-width: 168px;
         }
-        #controls button {
-            display: block;
-            margin-bottom: 5px;
-            padding: 8px 12px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            background-color: #f8f8f8;
+        .controls-label {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+            text-transform: uppercase; color: rgba(255,255,255,0.32);
+            padding: 0 6px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            margin-bottom: 8px;
+        }
+
+        /* ── Route buttons ─────────────────────────────────────────────────── */
+        .route-button {
+            display: flex; align-items: center; gap: 10px;
+            width: 100%; margin-bottom: 3px;
+            padding: 9px 12px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.04);
+            color: rgba(255,255,255,0.6);
+            font-size: 13px; font-weight: 500; font-family: inherit;
+            cursor: pointer; text-align: left;
+            -webkit-font-smoothing: antialiased;
+            transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease,
+                        transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease;
+            will-change: transform;
+        }
+        .route-button:last-child { margin-bottom: 4px; }
+        .route-button:hover {
+            background: rgba(255,255,255,0.10);
+            border-color: rgba(255,255,255,0.20);
+            color: rgba(255,255,255,0.88);
+            transform: translateX(2px) scale(1.01);
+        }
+        .route-button:active { transform: scale(0.97); transition-duration: 0.08s; }
+        .route-button.active { color: #fff; font-weight: 600; }
+
+        .route-dot {
+            width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+            border: 1.5px solid rgba(255,255,255,0.35);
+            transition: box-shadow 0.2s ease;
+        }
+
+        /* ── Per-line colour tokens ────────────────────────────────────────── */
+        :root {
+            --red:  #c60c30; --blue: #00a1de; --grn:  #009b3a; --brn:  #62361b;
+            --org:  #f9461c; --pur:  #522398; --pnk:  #e27ea6; --yel:  #f9e300;
+        }
+        [data-route="red"]  .route-dot { background: var(--red); }
+        [data-route="blue"] .route-dot { background: var(--blue); }
+        [data-route="g"]    .route-dot { background: var(--grn); }
+        [data-route="brn"]  .route-dot { background: var(--brn); }
+        [data-route="o"]    .route-dot { background: var(--org); }
+        [data-route="p"]    .route-dot { background: var(--pur); }
+        [data-route="pnk"]  .route-dot { background: var(--pnk); }
+        [data-route="y"]    .route-dot { background: var(--yel); }
+        [data-route="all"]  .route-dot { background: linear-gradient(135deg,#c60c30,#00a1de,#009b3a); border-color: rgba(255,255,255,0.5); }
+
+        [data-route="red"].active  { background: rgba(198, 12, 48,0.22); border-color: rgba(198, 12, 48,0.44); box-shadow: 0 0 18px rgba(198, 12, 48,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="blue"].active { background: rgba(0,161,222,0.22); border-color: rgba(0,161,222,0.44); box-shadow: 0 0 18px rgba(0,161,222,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="g"].active    { background: rgba(0,155,58,0.22);  border-color: rgba(0,155,58,0.44);  box-shadow: 0 0 18px rgba(0,155,58,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="brn"].active  { background: rgba(98,54,27,0.38);  border-color: rgba(98,54,27,0.60);  box-shadow: 0 0 18px rgba(98,54,27,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="o"].active    { background: rgba(249,70,28,0.22); border-color: rgba(249,70,28,0.44); box-shadow: 0 0 18px rgba(249,70,28,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="p"].active    { background: rgba(82,35,152,0.28); border-color: rgba(82,35,152,0.50); box-shadow: 0 0 18px rgba(82,35,152,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="pnk"].active  { background: rgba(226,126,166,0.22); border-color: rgba(226,126,166,0.44); box-shadow: 0 0 18px rgba(226,126,166,0.22), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="y"].active    { background: rgba(249,227,0,0.16); border-color: rgba(249,227,0,0.38);  box-shadow: 0 0 18px rgba(249,227,0,0.14), inset 0 1px 0 rgba(255,255,255,0.22); }
+        [data-route="all"].active  { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.35); box-shadow: 0 0 18px rgba(255,255,255,0.12), inset 0 1px 0 rgba(255,255,255,0.22); }
+
+        [data-route="red"].active  .route-dot { box-shadow: 0 0 9px var(--red); }
+        [data-route="blue"].active .route-dot { box-shadow: 0 0 9px var(--blue); }
+        [data-route="g"].active    .route-dot { box-shadow: 0 0 9px var(--grn); }
+        [data-route="brn"].active  .route-dot { box-shadow: 0 0 9px var(--brn); }
+        [data-route="o"].active    .route-dot { box-shadow: 0 0 9px var(--org); }
+        [data-route="p"].active    .route-dot { box-shadow: 0 0 9px var(--pur); }
+        [data-route="pnk"].active  .route-dot { box-shadow: 0 0 9px var(--pnk); }
+        [data-route="y"].active    .route-dot { box-shadow: 0 0 9px var(--yel); }
+        [data-route="all"].active  .route-dot { box-shadow: 0 0 9px rgba(255,255,255,0.8); }
+
+        /* ── Status pill ───────────────────────────────────────────────────── */
+        #status-pill {
+            position: absolute; bottom: 28px; left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000; padding: 8px 18px; border-radius: 40px;
+            display: flex; align-items: center; gap: 8px; white-space: nowrap;
+        }
+        .live-dot {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: #30d158; flex-shrink: 0;
+            animation: livepulse 2.6s ease-in-out infinite;
+        }
+        .live-dot.schedule { background: #ffd60a; animation: livepulse-sched 2.6s ease-in-out infinite; }
+        @keyframes livepulse {
+            0%,100% { opacity:1;   box-shadow: 0 0 5px #30d158; }
+            50%      { opacity:0.4; box-shadow: 0 0 1px #30d158; }
+        }
+        @keyframes livepulse-sched {
+            0%,100% { opacity:1;   box-shadow: 0 0 5px #ffd60a; }
+            50%      { opacity:0.4; box-shadow: 0 0 1px #ffd60a; }
+        }
+        .status-text { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.6); letter-spacing: 0.01em; }
+        .status-mode {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+            text-transform: uppercase; padding: 1px 7px; border-radius: 20px;
+            background: rgba(48,209,88,0.18); color: #30d158;
+        }
+        .status-mode.schedule { background: rgba(255,214,10,0.18); color: #ffd60a; }
+
+        /* ── Train markers (directional teardrop) ──────────────────────────── */
+
+        .train-marker-live {
+            /* No transition here — Leaflet uses transform:translate3d() on this
+               element for map positioning; transitioning it causes markers to
+               lag behind the map during zoom. */
+        }
+
+        .train-wrap {
+            width: 24px; height: 24px;
+            display: flex; align-items: center; justify-content: center;
             cursor: pointer;
-            min-width: 80px; /* Ensure buttons have some width */
-            text-align: center;
+            transform-origin: center;
+            transition: transform 0.4s ease; /* heading rotation only */
         }
-        #controls button:hover {
-            background-color: #eee;
+        .train-wrap:hover { filter: brightness(1.3) drop-shadow(0 0 6px var(--lc)); }
+
+        /* ── Station markers ───────────────────────────────────────────────── */
+        .station-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: rgba(255,255,255,0.18);
+            border: 1.5px solid rgba(255,255,255,0.5);
+            cursor: pointer;
+            transition: transform 0.15s ease;
         }
-        #controls button.active {
-            background-color: #ddd;
-            border-color: #aaa;
-            font-weight: bold;
+        .station-dot:hover { transform: scale(1.8); }
+
+        /* ── Arrivals popup ────────────────────────────────────────────────── */
+        .arr-station   { font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 12px; }
+        .arr-dir-block { margin-bottom: 12px; }
+        .arr-dir-block:last-child { margin-bottom: 0; }
+        .arr-dir-label {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+            text-transform: uppercase; color: rgba(255,255,255,0.38);
+            margin-bottom: 6px;
         }
-        #controls button:last-child {
-            margin-bottom: 0;
+        .arr-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 7px 10px; border-radius: 10px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.08);
+            margin-bottom: 4px;
         }
-        /* Add styles for different train lines later */
-        .train-marker-red { /* Example */
-            /* background-color: red; */
+        .arr-row:last-child { margin-bottom: 0; }
+        .arr-dest { flex: 1; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.88); }
+        .arr-eta  { font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; }
+        .arr-eta .unit { font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.5); }
+        .arr-status {
+            font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px;
+            white-space: nowrap;
         }
+        .arr-status.on-time    { background: rgba(48,209,88,0.2);  color: #30d158; }
+        .arr-status.late       { background: rgba(255,69,58,0.2);  color: #ff453a; }
+        .arr-status.early      { background: rgba(10,132,255,0.2); color: #0a84ff; }
+        .arr-status.scheduled  { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); }
+        .arr-route-chip {
+            font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 20px; color: #fff;
+            margin-bottom: 6px; display: inline-block;
+        }
+        .arr-approaching { font-size: 10px; color: #30d158; font-weight: 600; }
+        .arr-confidence  { font-size: 10px; color: rgba(255,255,255,0.35); margin-top: 2px; }
+        .arr-loading { text-align: center; padding: 16px; color: rgba(255,255,255,0.45); font-size: 13px; }
+        .arr-empty   { text-align: center; padding: 12px; color: rgba(255,255,255,0.35); font-size: 12px; }
+
+        /* ── Leaflet popup ─────────────────────────────────────────────────── */
+        .leaflet-popup-content-wrapper {
+            background: rgba(12,15,24,0.78) !important;
+            backdrop-filter: blur(28px) saturate(180%) !important;
+            -webkit-backdrop-filter: blur(28px) saturate(180%) !important;
+            border: 1px solid rgba(255,255,255,0.16) !important;
+            border-radius: 18px !important;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.28) !important;
+            color: rgba(255,255,255,0.85) !important;
+            padding: 0 !important;
+        }
+        .leaflet-popup-content {
+            margin: 14px 18px !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif !important;
+            font-size: 13px !important;
+            line-height: 1.6 !important;
+        }
+        .leaflet-popup-content .popup-title { font-size: 14px !important; font-weight: 700; color: #fff; display: block; margin-bottom: 4px; }
+        .leaflet-popup-content .popup-row   { color: rgba(255,255,255,0.6); font-size: 12px; }
+        .leaflet-popup-content .popup-badge {
+            display: inline-block; padding: 1px 8px; border-radius: 20px;
+            font-size: 11px; font-weight: 600; margin-top: 6px;
+            background: var(--lc); color: #fff;
+        }
+        .leaflet-popup-tip-container { display: none !important; }
+        .leaflet-popup-close-button {
+            color: rgba(255,255,255,0.4) !important; font-size: 18px !important;
+            padding: 8px 10px 0 0 !important; top: 0 !important; right: 0 !important;
+        }
+        .leaflet-popup-close-button:hover { color: rgba(255,255,255,0.9) !important; }
+
+        /* ── Leaflet controls ──────────────────────────────────────────────── */
+        .leaflet-control-zoom {
+            border: none !important; border-radius: 16px !important; overflow: hidden;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.22) !important;
+        }
+        .leaflet-control-zoom a {
+            background: rgba(255,255,255,0.09) !important;
+            backdrop-filter: blur(24px) !important; -webkit-backdrop-filter: blur(24px) !important;
+            color: rgba(255,255,255,0.82) !important;
+            border: none !important;
+            border-bottom: 1px solid rgba(255,255,255,0.07) !important;
+            width: 36px !important; height: 36px !important; line-height: 36px !important;
+            font-size: 17px !important; font-weight: 300 !important;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+        .leaflet-control-zoom a:hover { background: rgba(255,255,255,0.18) !important; color: #fff !important; }
+        .leaflet-control-zoom-out { border-bottom: none !important; }
+
+        .leaflet-control-attribution {
+            background: rgba(0,0,0,0.42) !important;
+            backdrop-filter: blur(10px) !important; -webkit-backdrop-filter: blur(10px) !important;
+            color: rgba(255,255,255,0.35) !important; font-size: 10px !important;
+            border-radius: 8px 0 0 0 !important; padding: 3px 8px !important;
+        }
+        .leaflet-control-attribution a { color: rgba(255,255,255,0.45) !important; }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
 
-<div id="controls">
-    <h4>Select Line:</h4>
-    <button data-route="red" class="route-button active">Red</button>
-    <button data-route="blue" class="route-button">Blue</button>
-    <button data-route="g" class="route-button">Green</button>
-    <button data-route="brn" class="route-button">Brown</button>
-    <button data-route="o" class="route-button">Orange</button>
-     <button data-route="p" class="route-button">Purple</button>
-     <button data-route="pnk" class="route-button">Pink</button>
-     <button data-route="y" class="route-button">Yellow</button>
+<!-- Title badge — top left -->
+<div id="title-badge" class="glass">
+    <span class="t-main">Chicago L</span>
+    <span class="t-sub">Live Tracker</span>
+</div>
+
+<!-- Line selector — top right -->
+<div id="controls" class="glass">
+    <div class="controls-label">Select Line</div>
+    <button data-route="all"  class="route-button"><span class="route-dot"></span>All Lines</button>
+    <button data-route="red"  class="route-button active"><span class="route-dot"></span>Red Line</button>
+    <button data-route="blue" class="route-button"><span class="route-dot"></span>Blue Line</button>
+    <button data-route="g"    class="route-button"><span class="route-dot"></span>Green Line</button>
+    <button data-route="brn"  class="route-button"><span class="route-dot"></span>Brown Line</button>
+    <button data-route="o"    class="route-button"><span class="route-dot"></span>Orange Line</button>
+    <button data-route="p"    class="route-button"><span class="route-dot"></span>Purple Line</button>
+    <button data-route="pnk"  class="route-button"><span class="route-dot"></span>Pink Line</button>
+    <button data-route="y"    class="route-button"><span class="route-dot"></span>Yellow Line</button>
+</div>
+
+<!-- Status pill — bottom centre -->
+<div id="status-pill" class="glass">
+    <div class="live-dot" id="live-dot"></div>
+    <span class="status-text" id="status-text">Connecting…</span>
+    <span class="status-mode" id="status-mode" style="display:none"></span>
 </div>
 
 <script>
-    // --- Map Initialization ---
-    const map = L.map('map').setView([41.8781, -87.6298], 11); // Centered on Chicago
+// ── Map ──────────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false }).setView([41.8781, -87.6298], 11);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19,
+}).addTo(map);
 
-    // Layer group to hold train markers
-    const trainLayer = L.layerGroup().addTo(map);
-    let currentIntervalId = null; // To store the ID of the interval timer
+// ── Constants ────────────────────────────────────────────────────────────────
+const ROUTE_COLORS = {
+    red: '#c60c30', blue: '#00a1de', g: '#009b3a', brn: '#62361b',
+    o: '#f9461c', p: '#522398', pnk: '#e27ea6', y: '#f9e300',
+};
+const ROUTE_NAMES = {
+    red: 'Red', blue: 'Blue', g: 'Green', brn: 'Brown',
+    o: 'Orange', p: 'Purple', pnk: 'Pink', y: 'Yellow',
+};
+const ROUTE_COLORS_MAP = {   // keyed by CTA API name (for arrivals popup)
+    Red: '#c60c30', Blue: '#00a1de', G: '#009b3a', Brn: '#62361b',
+    Org: '#f9461c', P: '#522398', Pink: '#e27ea6', Y: '#f9e300',
+};
+const ALL_ROUTES  = ['red', 'blue', 'g', 'brn', 'o', 'p', 'pnk', 'y'];
+const API_TRAINS  = '/api/trains';
+const API_ROUTE   = '/api/geojson/routes';
+const API_STOPS   = '/api/geojson/stops';
+const UPDATE_MS   = 15000;
 
-    // --- Data Fetching and Map Update ---
-    const API_BASE_URL = '/api/trains'; // Base URL for our Flask API
-    let currentRoute = 'red'; // Start with the red line, but mutable
-    const UPDATE_INTERVAL_MS = 15000; // Update map every 15 seconds
+// ── Layer groups ─────────────────────────────────────────────────────────────
+const routeLineLayer = L.layerGroup().addTo(map);
+const stationLayer   = L.layerGroup().addTo(map);
+const trainLayer     = L.layerGroup().addTo(map);
 
-    async function updateMap() {
-        console.log(`Fetching train data for route: ${currentRoute}...`);
-        const apiUrl = `${API_BASE_URL}/${currentRoute}`;
+// Stable marker store: key = `${route}-${run_number}` → Leaflet Marker
+// Keeps markers alive across refreshes so we can setLatLng() instead of remove+recreate.
+const liveMarkers = new Map();
 
-        try {
-            const response = await fetch(apiUrl);
-            if (!response.ok) {
-                // Handle specific errors like 404 (invalid route in backend) or 500 (server error)
-                let errorMsg = `HTTP error! status: ${response.status}`;
-                if (response.status === 404) {
-                     try {
-                         const errData = await response.json();
-                         errorMsg = errData.description || "Route not found or invalid.";
-                     } catch(e) { /* Ignore if response is not JSON */ }
-                 }
-                throw new Error(errorMsg);
-            }
-            const data = await response.json(); // Expecting { route: "...", trains: [...] }
+let currentRoute      = 'red';
+let currentIntervalId = null;
 
-            // Clear existing markers before adding new ones for the current route
-            trainLayer.clearLayers();
+// ── Status helpers ───────────────────────────────────────────────────────────
+const statusTextEl = document.getElementById('status-text');
+const statusModeEl = document.getElementById('status-mode');
+const liveDotEl    = document.getElementById('live-dot');
 
-            if (data.trains && data.trains.length > 0) {
-                console.log(`Processing ${data.trains.length} trains for route ${data.route}.`);
-                data.trains.forEach(train => {
-                    if (train.lat != null && train.lon != null) {
-                        // TODO: Add custom icons based on route/heading later
-                        const marker = L.marker([train.lat, train.lon]);
-                        marker.bindPopup(`<b>${data.route.toUpperCase()} Line Train</b><br>Heading: ${train.heading}&deg;`);
-                        trainLayer.addLayer(marker);
-                    } else {
-                        console.warn("Skipping train with null lat/lon:", train);
-                    }
-                });
+function setStatus(text, positionSource) {
+    if (statusTextEl) statusTextEl.textContent = text;
+    if (!statusModeEl || !liveDotEl) return;
+    if (positionSource === 'schedule') {
+        statusModeEl.textContent = 'Schedule';
+        statusModeEl.className = 'status-mode schedule';
+        statusModeEl.style.display = '';
+        liveDotEl.className = 'live-dot schedule';
+    } else if (positionSource === 'gps') {
+        statusModeEl.textContent = 'GPS';
+        statusModeEl.className = 'status-mode';
+        statusModeEl.style.display = '';
+        liveDotEl.className = 'live-dot';
+    } else {
+        statusModeEl.style.display = 'none';
+        liveDotEl.className = 'live-dot';
+    }
+}
+
+// ── Train marker SVG ─────────────────────────────────────────────────────────
+// Teardrop shape pointing UP (north). CSS rotate handles heading.
+function makeSVGTeardrop(color) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="28" viewBox="0 0 24 28">
+      <circle cx="12" cy="17" r="9" fill="${color}" opacity="0.22"/>
+      <circle cx="12" cy="17" r="7" fill="${color}" stroke="rgba(255,255,255,0.75)" stroke-width="1.8"/>
+      <ellipse cx="10" cy="14" rx="3" ry="2" fill="rgba(255,255,255,0.35)" transform="rotate(-20 10 14)"/>
+      <polygon points="12,1 8,10 16,10" fill="${color}" stroke="rgba(255,255,255,0.75)" stroke-width="1.4" stroke-linejoin="round"/>
+    </svg>`;
+}
+
+function createTrainIcon(color, headingDeg) {
+    return L.divIcon({
+        className: 'train-marker-live',
+        html: `<div class="train-wrap" style="--lc:${color}; transform:rotate(${headingDeg}deg);">${makeSVGTeardrop(color)}</div>`,
+        iconSize:    [24, 28],
+        iconAnchor:  [12, 17],
+        popupAnchor: [0, -20],
+    });
+}
+
+// ── Station marker ───────────────────────────────────────────────────────────
+function createStationIcon(color) {
+    return L.divIcon({
+        className: '',
+        html: `<div class="station-dot" style="border-color:${color}80;background:${color}22;"></div>`,
+        iconSize:    [8, 8],
+        iconAnchor:  [4, 4],
+        popupAnchor: [0, -8],
+    });
+}
+
+// ── Train popup content ───────────────────────────────────────────────────────
+function trainPopupHTML(route, train) {
+    const color  = ROUTE_COLORS[route] || '#fff';
+    const name   = ROUTE_NAMES[route]  || route.toUpperCase();
+    const dest   = train.dest_name   ? `→ ${train.dest_name}` : '';
+    const next   = train.next_sta_name ? `<span class="popup-row">Next stop: ${train.next_sta_name}</span>` : '';
+    const delay  = train.is_delayed  ? '<span style="color:#ff453a;font-size:11px;margin-top:2px;display:block;">⚠ Delayed</span>' : '';
+    const src    = train.position_source === 'schedule'
+        ? '<span style="color:rgba(255,214,10,0.7);font-size:10px;">Schedule-based position</span>'
+        : '';
+    return `<span class="popup-title">${name} Line ${dest}</span>` +
+           next +
+           `<span class="popup-row">Heading: ${train.heading ?? 0}&deg;</span>` +
+           delay + src +
+           `<span class="popup-badge" style="--lc:${color}">${name}</span>`;
+}
+
+// ── Arrivals popup ────────────────────────────────────────────────────────────
+function statusClass(s) {
+    if (!s) return 'scheduled';
+    const l = s.toLowerCase();
+    if (l === 'on time') return 'on-time';
+    if (l.includes('late') || l.includes('behind')) return 'late';
+    if (l.includes('early') || l.includes('ahead')) return 'early';
+    return 'scheduled';
+}
+
+function renderArrivalsPopup(data) {
+    const dirs = data.directions || [];
+    if (!dirs.length)
+        return `<div class="arr-station">${data.station_name || 'Station'}</div><div class="arr-empty">No arrivals found</div>`;
+
+    let html = `<div class="arr-station">${data.station_name || 'Station'}</div>`;
+    for (const dir of dirs) {
+        const color = ROUTE_COLORS_MAP[dir.route] || '#fff';
+        html += `<div class="arr-dir-block">
+            <div style="margin-bottom:6px;">
+                <span class="arr-route-chip" style="background:${color}">${dir.route}</span>
+                <span class="arr-dir-label" style="display:inline">${dir.direction_label}</span>
+            </div>`;
+        for (const t of (dir.trains || []).slice(0, 3)) {
+            const eta    = t.eta_minutes != null ? t.eta_minutes : '—';
+            const etaStr = t.is_approaching
+                ? `<span class="arr-approaching">Arriving</span>`
+                : `<span class="arr-eta">${eta}<span class="unit"> min</span></span>`;
+            const sc = statusClass(t.delay_status);
+            const badge = `<span class="arr-status ${sc}">${t.delay_status || 'Scheduled'}</span>`;
+            const conf  = (t.predictor_active && t.p10_minutes != null)
+                ? `<div class="arr-confidence">Range: ${t.p10_minutes.toFixed(0)}–${t.p90_minutes.toFixed(0)} min</div>`
+                : '';
+            html += `<div class="arr-row"><span class="arr-dest">→ ${t.destination || '—'}</span>${etaStr}${badge}</div>${conf}`;
+        }
+        html += `</div>`;
+    }
+    return html;
+}
+
+async function fetchAndShowArrivals(marker, mapid, stationName) {
+    marker.bindPopup(
+        `<div class="arr-station">${stationName}</div><div class="arr-loading">Loading arrivals…</div>`,
+        { maxWidth: 320, minWidth: 260 }
+    ).openPopup();
+    try {
+        const data = await fetch(`/api/station/${mapid}/arrivals?n=12`).then(r => r.json());
+        marker.setPopupContent(renderArrivalsPopup(data));
+    } catch {
+        marker.setPopupContent(
+            `<div class="arr-station">${stationName}</div><div class="arr-empty">Failed to load arrivals</div>`
+        );
+    }
+}
+
+// ── Route polylines ───────────────────────────────────────────────────────────
+async function loadRouteLines(routes) {
+    routeLineLayer.clearLayers();
+    try {
+        const arg = routes.length === 1 ? routes[0] : 'all';
+        const gj  = await fetch(`${API_ROUTE}/${arg}`).then(r => r.json());
+        L.geoJSON(gj, {
+            style: f => ({
+                color:   ROUTE_COLORS[f.properties.route] || '#fff',
+                weight:  routes.length === 1 ? 3.5 : 2.5,
+                opacity: routes.length === 1 ? 0.85 : 0.7,
+                lineJoin: 'round', lineCap: 'round',
+            }),
+        }).addTo(routeLineLayer);
+    } catch (e) { console.error('Route line load failed:', e); }
+}
+
+// ── Station markers ───────────────────────────────────────────────────────────
+const _placedMapids = new Set();
+
+async function loadStations(routes) {
+    stationLayer.clearLayers();
+    _placedMapids.clear();
+
+    const results = await Promise.allSettled(
+        routes.map(r => fetch(`${API_STOPS}/${r}`).then(res => res.json()).then(gj => ({ route: r, gj })))
+    );
+
+    for (const res of results) {
+        if (res.status !== 'fulfilled') continue;
+        const { route, gj } = res.value;
+        const color = ROUTE_COLORS[route] || '#fff';
+
+        for (const feat of (gj.features || [])) {
+            const mapid = feat.properties.mapid;
+            const name  = feat.properties.name || 'Station';
+
+            if (mapid && _placedMapids.has(mapid)) continue;
+            if (mapid) _placedMapids.add(mapid);
+
+            const [lon, lat] = feat.geometry.coordinates;
+            const marker = L.marker([lat, lon], { icon: createStationIcon(color), zIndexOffset: 100 });
+
+            if (mapid) {
+                marker.on('click', () => fetchAndShowArrivals(marker, mapid, name));
             } else {
-                console.log(`No train data received for route ${data.route || currentRoute}.`);
-                 // Optional: Display a message on the map if no trains found?
-                 // L.popup().setLatLng(map.getCenter()).setContent(`No active trains found for ${currentRoute.toUpperCase()} line.` ).openOn(map);
+                marker.bindPopup(`<span class="popup-title">${name}</span>`);
             }
+            stationLayer.addLayer(marker);
+        }
+    }
+}
 
-        } catch (error) {
-            console.error(`Failed to fetch or update train data for ${currentRoute}:`, error);
-            // Display error to user (simple example)
-            trainLayer.clearLayers(); // Clear potentially stale markers
-            // Consider a more robust error display mechanism
-            alert(`Error fetching data for ${currentRoute.toUpperCase()} line: ${error.message}`);
+// ── Train diff-update ─────────────────────────────────────────────────────────
+// Core idea: never call clearLayers() on periodic refresh.
+// Existing markers get setLatLng() + heading update; CSS transition animates the move.
+// Only new trains get a new marker; gone trains get removed.
+
+function diffUpdateTrains(routeTrainMap) {
+    const currentKeys = new Set();
+    let total = 0;
+
+    for (const [route, trains] of routeTrainMap) {
+        const color = ROUTE_COLORS[route] || '#fff';
+
+        for (const train of trains) {
+            if (train.lat == null || train.lon == null) continue;
+            total++;
+
+            const rn  = train.run_number || `${train.lat.toFixed(4)},${train.lon.toFixed(4)}`;
+            const key = `${route}-${rn}`;
+            currentKeys.add(key);
+
+            if (liveMarkers.has(key)) {
+                // Smooth update — just move the existing marker
+                const marker = liveMarkers.get(key);
+                marker.setLatLng([train.lat, train.lon]);
+                // Update heading on the inner wrap without recreating the whole icon
+                const el = marker.getElement();
+                if (el) {
+                    const wrap = el.querySelector('.train-wrap');
+                    if (wrap) wrap.style.transform = `rotate(${train.heading ?? 0}deg)`;
+                }
+                // Refresh popup content if it's currently open
+                if (marker.isPopupOpen()) {
+                    marker.setPopupContent(trainPopupHTML(route, train));
+                }
+            } else {
+                // New train — create marker
+                const marker = L.marker([train.lat, train.lon], {
+                    icon: createTrainIcon(color, train.heading ?? 0),
+                    zIndexOffset: 500,
+                });
+                marker.bindPopup(trainPopupHTML(route, train), { maxWidth: 280 });
+                trainLayer.addLayer(marker);
+                liveMarkers.set(key, marker);
+            }
         }
     }
 
-    // --- Route Selection Logic ---
-    const routeButtons = document.querySelectorAll('.route-button');
-
-    function setActiveButton(selectedRoute) {
-        routeButtons.forEach(button => {
-            if (button.dataset.route === selectedRoute) {
-                button.classList.add('active');
-            } else {
-                button.classList.remove('active');
-            }
-        });
+    // Remove trains that are no longer active on the current set of routes
+    const activeRoutes = new Set([...routeTrainMap.keys()]);
+    for (const [key, marker] of liveMarkers) {
+        const keyRoute = key.split('-')[0];
+        if (activeRoutes.has(keyRoute) && !currentKeys.has(key)) {
+            trainLayer.removeLayer(marker);
+            liveMarkers.delete(key);
+        }
     }
 
-    routeButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            const selectedRoute = button.dataset.route;
-            if (selectedRoute !== currentRoute) {
-                console.log(`Route changed to: ${selectedRoute}`);
-                currentRoute = selectedRoute;
-                setActiveButton(selectedRoute);
-                updateMap(); // Fetch data immediately for the new route
-                // Restart the interval timer to ensure it uses the new route
-                if (currentIntervalId) {
-                    clearInterval(currentIntervalId);
-                }
-                currentIntervalId = setInterval(updateMap, UPDATE_INTERVAL_MS);
-            }
-        });
+    return total;
+}
+
+// ── Full load (on route switch) ───────────────────────────────────────────────
+async function fullRefresh(routes) {
+    // Clear the stable marker store when switching routes
+    for (const [, marker] of liveMarkers) trainLayer.removeLayer(marker);
+    liveMarkers.clear();
+
+    await Promise.all([
+        loadRouteLines(routes),
+        loadStations(routes),
+        refreshTrains(routes),
+    ]);
+}
+
+// ── Periodic train refresh (no flash) ────────────────────────────────────────
+async function refreshTrains(routes) {
+    try {
+        const results = await Promise.allSettled(
+            routes.map(r =>
+                fetch(`${API_TRAINS}/${r}`)
+                    .then(res => res.json())
+                    .then(d => ({ route: r, trains: d.trains || [], source: d.position_source }))
+            )
+        );
+
+        const routeTrainMap = new Map();
+        let dominantSource = 'gps';
+
+        for (const res of results) {
+            if (res.status !== 'fulfilled') continue;
+            const { route, trains, source } = res.value;
+            routeTrainMap.set(route, trains);
+            if (source === 'schedule') dominantSource = 'schedule';
+        }
+
+        const total = diffUpdateTrains(routeTrainMap);
+
+        if (total > 0) {
+            setStatus(`${total} train${total !== 1 ? 's' : ''} · updates every 15s`, dominantSource);
+        } else {
+            setStatus('No active trains found', null);
+        }
+    } catch (err) {
+        console.error('Train refresh failed:', err);
+        setStatus('Update failed — retrying…', null);
+    }
+}
+
+// ── Route selection ──────────────────────────────────────────────────────────
+const routeButtons = document.querySelectorAll('.route-button');
+
+function setActiveButton(route) {
+    routeButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.route === route));
+}
+
+routeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const route = btn.dataset.route;
+        if (route === currentRoute) return;
+        currentRoute = route;
+        setActiveButton(route);
+
+        if (currentIntervalId) clearInterval(currentIntervalId);
+        const routes = route === 'all' ? ALL_ROUTES : [route];
+        fullRefresh(routes);
+        currentIntervalId = setInterval(() => refreshTrains(routes), UPDATE_MS);
     });
+});
 
-    // --- Initial Load and Interval ---
-    setActiveButton(currentRoute); // Set the default button active
-    updateMap(); // Initial map update for the default route
-    currentIntervalId = setInterval(updateMap, UPDATE_INTERVAL_MS); // Set interval for periodic updates
-
-
+// ── Boot ─────────────────────────────────────────────────────────────────────
+setActiveButton(currentRoute);
+fullRefresh([currentRoute]);
+currentIntervalId = setInterval(() => refreshTrains([currentRoute]), UPDATE_MS);
 </script>
-
 </body>
-</html> 
+</html>

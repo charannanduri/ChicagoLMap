@@ -1,19 +1,26 @@
-from __future__ import annotations  # allow `str | None` style hints on Python 3.9
+from __future__ import annotations
 
 import os
 import logging
-import json # Added for loading GeoJSON
-import zipfile # For reading KMZ
-from io import BytesIO # For reading zip content in memory
-from flask import Flask, jsonify, abort, send_from_directory, request
-from cta_data import get_train_positions, get_station_arrivals # Import our data fetching functions
-from fastkml import kml # KML parsing library
-from fastkml.features import Placemark # Placemark lives here in fastkml >= 1.0
-from shapely.geometry import mapping # To convert geometry to GeoJSON compatible format
-from bs4 import BeautifulSoup # Added HTML parser
+import json
+import zipfile
+from io import BytesIO
+from datetime import datetime, timezone
 
-# Configure basic logging (optional, but good practice)
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+import requests as _requests
+from flask import Flask, jsonify, abort, send_from_directory, request
+from cta_data import (
+    get_train_positions,
+    get_station_arrivals,
+    get_train_positions_via_arrivals,
+    get_arrivals,
+)
+from fastkml import kml
+from fastkml.features import Placemark
+from shapely.geometry import mapping
+from bs4 import BeautifulSoup
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 app = Flask(__name__)
 
@@ -32,13 +39,105 @@ if not CTA_API_KEY and os.path.exists('api_key.txt'):
         logging.error(f"Error reading API key from file: {e}")
 
 if not CTA_API_KEY:
-    logging.warning("CTA API Key not found. Please set the CTA_API_KEY environment variable or create an api_key.txt file.")
-    # You might want to exit or handle this more gracefully depending on requirements
-    # For now, we'll allow the app to run but API calls will likely fail.
+    logging.warning("CTA API Key not configured — train API calls will fail.")
 
-# Allowed routes (you can expand this list)
-# Using a set for efficient lookup
+# Delay predictor service URL (set DELAY_PREDICTOR_URL env var when predictor is running).
+# When configured, station arrival popups will include ML-based delay forecasts.
+DELAY_PREDICTOR_URL = os.environ.get("DELAY_PREDICTOR_URL", "").rstrip("/")
+
 ALLOWED_ROUTES = {"red", "blue", "g", "brn", "p", "y", "pnk", "o"}
+
+# Cache station maps so we only parse the KMZ once per route
+_station_map_cache: dict[str, dict[int, dict]] = {}
+
+# Maps normalised route key → CTA line name(s) that appear in KMZ "Rail Line" cells
+_ROUTE_LINE_NAMES = {
+    'red':  {'red'},
+    'blue': {'blue'},
+    'g':    {'green'},
+    'brn':  {'brown'},
+    'o':    {'orange'},
+    'p':    {'purple', 'evanston express'},
+    'pnk':  {'pink'},
+    'y':    {'yellow'},
+}
+
+
+def _build_station_map(route: str) -> dict[int, dict]:
+    """
+    Parse CTA_RailStations.kmz and return {mapid: {name, lat, lon}} for every
+    station on the given route.  mapid = 40000 + KMZ Station ID.
+    Results are cached so the KMZ is only parsed once per route per process.
+    """
+    if route in _station_map_cache:
+        return _station_map_cache[route]
+
+    kmz_filename = 'CTA_RailStations.kmz'
+    if not os.path.exists(kmz_filename):
+        logging.error("CTA_RailStations.kmz not found; arrivals fallback unavailable.")
+        return {}
+
+    try:
+        with zipfile.ZipFile(kmz_filename, 'r') as kmz:
+            kml_files = [n for n in kmz.namelist() if n.lower().endswith('.kml')]
+            if not kml_files:
+                return {}
+            kml_content = kmz.read(kml_files[0])
+    except Exception as e:
+        logging.error(f"Could not read KMZ for station map: {e}")
+        return {}
+
+    target_names = _ROUTE_LINE_NAMES.get(route, set())
+    station_map: dict[int, dict] = {}
+
+    try:
+        from fastkml import kml as fastkml_mod
+        from fastkml.features import Placemark as FKPlacemark
+
+        k = fastkml_mod.KML.parse(BytesIO(kml_content))
+
+        def _walk(node):
+            yield node
+            for child in (node.features if hasattr(node, 'features') else []) or []:
+                yield from _walk(child)
+
+        for pm in _walk(k):
+            if not isinstance(pm, FKPlacemark) or not pm.description or not pm.geometry:
+                continue
+
+            soup = BeautifulSoup(pm.description, 'html.parser')
+
+            rail_td = soup.find('td', string='Rail Line')
+            if not rail_td:
+                continue
+            line_text = rail_td.find_next_sibling('td').get_text(strip=True)
+            lines_in_kml = {
+                seg.replace('Line', '').strip().lower()
+                for seg in line_text.split(',')
+            }
+            if not target_names.intersection(lines_in_kml):
+                continue
+
+            sta_id_td = soup.find('td', string='Station ID')
+            if not sta_id_td:
+                continue
+            try:
+                sta_id = int(sta_id_td.find_next_sibling('td').get_text(strip=True))
+            except (ValueError, TypeError):
+                continue
+
+            mapid = 40000 + sta_id
+            station_map[mapid] = {
+                'name': pm.name or 'Unknown',
+                'lat':  pm.geometry.y,
+                'lon':  pm.geometry.x,
+            }
+    except Exception as e:
+        logging.error(f"Error building station map for route '{route}': {e}")
+
+    logging.info(f"Station map for '{route}': {len(station_map)} stations cached.")
+    _station_map_cache[route] = station_map
+    return station_map
 
 # --- Helper Function for GeoJSON --- (Added)
 def load_and_filter_geojson(filename: str, route_filter_property: str, route_value: str):
@@ -147,13 +246,24 @@ def load_and_filter_kml_stops(kml_content: bytes, route_value: str):
             if route_match:
                 try:
                     geojson_geometry = mapping(pm.geometry)
+                    # Extract Station ID so the frontend can call /api/station/<mapid>/arrivals
+                    sta_id_td = soup.find('td', string='Station ID')
+                    sta_id = None
+                    mapid = None
+                    if sta_id_td and sta_id_td.find_next_sibling('td'):
+                        try:
+                            sta_id = int(sta_id_td.find_next_sibling('td').get_text(strip=True))
+                            mapid = 40000 + sta_id
+                        except (ValueError, TypeError):
+                            pass
                     feature = {
                         "type": "Feature",
                         "geometry": geojson_geometry,
                         "properties": {
                             "name": station_name,
-                            "address": address,  # Add address to properties
-                            "route": route_value  # Add route to properties
+                            "address": address,
+                            "route": route_value,
+                            "mapid": mapid,
                         }
                     }
                     features.append(feature)
@@ -188,18 +298,43 @@ def api_get_trains(route):
         abort(500, description="Server configuration error: API key missing.") # 500 Internal Server Error
 
     train_data = get_train_positions(CTA_API_KEY, route_lower)
+    position_source = "gps"
 
-    # get_train_positions handles its own logging for fetch errors
-    # We return the data (which might be an empty list if fetching failed)
-    return jsonify({"route": route_lower, "trains": train_data})
+    if not train_data:
+        logging.info(f"GPS empty for '{route_lower}'; using arrivals fallback.")
+        station_map = _build_station_map(route_lower)
+        if station_map:
+            train_data = get_train_positions_via_arrivals(CTA_API_KEY, route_lower, station_map)
+            position_source = "schedule"
+
+    return jsonify({
+        "route":           route_lower,
+        "trains":          train_data,
+        "position_source": position_source,
+        "train_count":     len(train_data),
+    })
 
 # --- GeoJSON API Routes --- (Updated)
 @app.route('/api/geojson/routes/<route>', methods=['GET'])
 def api_get_geojson_route(route):
-    """Serves GeoJSON linestring for a specific route. (Placeholder - KMZ not provided for lines)"""
-    logging.warning(f"Route line geometry requested for '{route}', but only KMZ stops provided. Returning empty.")
-    # Return empty FeatureCollection as we don't have line data source
-    return jsonify({"type": "FeatureCollection", "features": []})
+    """Serves GeoJSON LineString for the given route from the pre-built GTFS shapes file."""
+    route_lower = route.lower()
+    filepath = os.path.join('static_data', 'cta_rail_lines.geojson')
+    if not os.path.exists(filepath):
+        return jsonify({"type": "FeatureCollection", "features": []})
+    try:
+        with open(filepath) as f:
+            all_lines = json.load(f)
+        if route_lower == 'all':
+            return jsonify(all_lines)
+        features = [
+            feat for feat in all_lines.get('features', [])
+            if feat.get('properties', {}).get('route') == route_lower
+        ]
+        return jsonify({"type": "FeatureCollection", "features": features})
+    except Exception as e:
+        logging.error(f"Error serving route GeoJSON for '{route}': {e}")
+        return jsonify({"type": "FeatureCollection", "features": []})
 
 @app.route('/api/geojson/stops/<route>', methods=['GET'])
 def api_get_geojson_stops(route):
@@ -242,6 +377,140 @@ def api_get_geojson_stops(route):
         abort(500, description=f"Error processing KML data for stops on route '{route_lower}'. Check server logs.")
 
     return jsonify(geojson_result)
+
+# ── Station arrivals endpoint (used by map popups) ────────────────────────────
+
+def _delay_status_label(delay_minutes: float | None, is_scheduled: bool) -> str:
+    """Human-readable delay status for display."""
+    if delay_minutes is None:
+        return "Scheduled" if is_scheduled else "On Time"
+    if delay_minutes > 1:
+        return f"{int(round(delay_minutes))} min late"
+    if delay_minutes < -1:
+        return f"{int(round(abs(delay_minutes)))} min early"
+    return "On Time"
+
+
+def _try_predictor(mapid: int) -> dict[str, dict]:
+    """
+    Call the delay predictor service if configured.
+    Returns {run_number: {delay_minutes, delay_status, p10, p90}} or {}.
+    Silently returns {} if the service is down or not configured.
+    """
+    if not DELAY_PREDICTOR_URL:
+        return {}
+    try:
+        resp = _requests.get(
+            f"{DELAY_PREDICTOR_URL}/stations/{mapid}/arrivals",
+            params={"n": 20},
+            timeout=2,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception:
+        return {}
+
+    result: dict[str, dict] = {}
+    for item in payload.get("arrivals", []):
+        rn = str(item.get("run_number") or "")
+        if not rn:
+            continue
+        result[rn] = {
+            "delay_minutes":  item.get("model_delay_minutes"),
+            "delay_status":   item.get("delay_status"),
+            "p10_minutes":    item.get("p10_minutes"),
+            "p90_minutes":    item.get("p90_minutes"),
+        }
+    return result
+
+
+@app.route('/api/station/<int:mapid>/arrivals', methods=['GET'])
+def api_station_arrivals(mapid):
+    """
+    Next arrivals at a station, grouped by route+direction, enriched with
+    ML delay predictions when the predictor service is running.
+
+    Query params:
+        route  — optional CTA route filter (e.g. "red")
+        n      — max arrivals to fetch (default 10, max 20)
+    """
+    if not CTA_API_KEY:
+        abort(500, description="CTA API key not configured.")
+
+    route_filter = request.args.get("route", "").lower() or None
+    n = min(int(request.args.get("n", 10)), 20)
+
+    raw = get_arrivals(CTA_API_KEY, mapid, route=route_filter, max_results=n)
+
+    if not raw:
+        return jsonify({
+            "mapid": mapid,
+            "station_name": None,
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "directions": [],
+        })
+
+    # Try to get ML predictions; gracefully absent when predictor isn't running
+    predictions = _try_predictor(mapid)
+
+    station_name = raw[0].get("station_name") if raw else None
+
+    # Group arrivals by (route, direction_label) — direction_label from stop_desc
+    from collections import defaultdict
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+
+    for a in raw:
+        rt = a.get("route") or ""
+        # "Service toward Howard" → "toward Howard"
+        desc = a.get("stop_desc") or ""
+        direction_label = desc.replace("Service ", "").strip() or f"Direction {a.get('direction_code')}"
+        key = (rt, direction_label)
+
+        rn = str(a.get("run_number") or "")
+        pred = predictions.get(rn, {})
+        delay_min = pred.get("delay_minutes")
+        is_sched = a.get("is_scheduled", False)
+
+        # Prefer ML status label if available, else derive from CTA isDly flag
+        if pred.get("delay_status"):
+            status_str = {
+                "behind":  f"{int(round(abs(delay_min or 0)))} min late",
+                "ahead":   f"{int(round(abs(delay_min or 0)))} min early",
+                "on_time": "On Time",
+            }.get(pred["delay_status"], "On Time")
+        else:
+            status_str = _delay_status_label(
+                delay_min if delay_min is not None else (2.0 if a.get("is_delayed") else None),
+                is_sched,
+            )
+
+        groups[key].append({
+            "run_number":       rn,
+            "destination":      a.get("dest_name"),
+            "eta_minutes":      a.get("eta_minutes"),
+            "arrival_time":     a.get("arrival_time"),
+            "is_approaching":   a.get("is_approaching"),
+            "is_scheduled":     is_sched,
+            "is_delayed":       a.get("is_delayed"),
+            "delay_minutes":    delay_min,
+            "delay_status":     status_str,
+            "p10_minutes":      pred.get("p10_minutes"),
+            "p90_minutes":      pred.get("p90_minutes"),
+            "predictor_active": bool(pred),
+        })
+
+    directions = [
+        {"route": rt, "direction_label": label, "trains": trains}
+        for (rt, label), trains in groups.items()
+    ]
+
+    return jsonify({
+        "mapid":        mapid,
+        "station_name": station_name,
+        "as_of":        datetime.now(timezone.utc).isoformat(),
+        "directions":   directions,
+    })
+
 
 # --- Hardware-facing endpoints --- (compact JSON for the ESP32 companion device)
 #
@@ -312,7 +581,6 @@ def api_station_status(route):
         for name, dirs in sorted(occupied.items())
     ]
 
-    from datetime import datetime, timezone
     return jsonify({
         'route': route_lower,
         'as_of': datetime.now(timezone.utc).isoformat(),
