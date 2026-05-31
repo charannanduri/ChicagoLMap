@@ -48,8 +48,12 @@ def _is_peak_pm(local_dt: datetime) -> bool:
     return local_dt.weekday() < 5 and 16 <= local_dt.hour < 19
 
 
-def build_features(lookback_hours: int = _LOOKBACK_HOURS) -> int:
-    since = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        if lookback_hours is not None
+        else datetime.min.replace(tzinfo=timezone.utc)
+    )
     inserted = 0
 
     with SessionLocal() as db:
@@ -182,5 +186,11 @@ def build_features(lookback_hours: int = _LOOKBACK_HOURS) -> int:
 
 
 if __name__ == "__main__":
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--all", action="store_true", help="Process all historical data")
+    p.add_argument("--hours", type=int, default=None)
+    args = p.parse_args()
     init_db()
-    build_features()
+    hours = None if args.all else (args.hours or _LOOKBACK_HOURS)
+    build_features(lookback_hours=hours)

@@ -1,0 +1,63 @@
+name: Full ETL Reprocess
+
+# Run manually from the GitHub Actions tab.
+# Use this to recover from pipeline bugs or to re-label historical data.
+#
+# Step 1: backfill_timestamps  — fixes NULL arr_t in rows collected before the
+#                                 date-format bug was patched
+# Step 2: arrival_inference    — infers actual arrivals from ALL snapshots
+# Step 3: feature_builder      — builds model_features from ALL snapshots
+# Step 4: retrain              — trains models on newly labeled data
+#
+# Expect this to take 15–60 minutes depending on how much data is in the DB.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reprocess:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cta-delay-predictor/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r cta-delay-predictor/requirements.txt
+
+      - name: Backfill NULL timestamps from raw_json
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.backfill_timestamps
+
+      - name: Infer actual arrivals (all history)
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.arrival_inference --all
+
+      - name: Build model features (all history)
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.feature_builder --all
+
+      - name: Train models
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.ml.train
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-models-reprocess-${{ github.run_id }}
+          path: cta-delay-predictor/ml_models/
+          retention-days: 90

@@ -41,14 +41,22 @@ _ROUTE_IDS = {
 
 
 def _parse_cta_dt(raw: str | None) -> datetime | None:
-    """Parse 'YYYYMMDD HH:MM:SS' → tz-aware Chicago datetime."""
+    """Parse CTA timestamp → tz-aware Chicago datetime.
+
+    JSON API returns ISO-8601 ('2026-05-30T22:12:45').
+    XML / legacy format is 'YYYYMMDD HH:MM:SS'.
+    Try both so the client is forward-compatible.
+    """
     if not raw:
         return None
-    try:
-        naive = datetime.strptime(raw, "%Y%m%d %H:%M:%S")
-        return _TZ.localize(naive)
-    except ValueError:
-        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y%m%d %H:%M:%S"):
+        try:
+            naive = datetime.strptime(raw, fmt)
+            return _TZ.localize(naive)
+        except ValueError:
+            continue
+    logger.warning("Unrecognised CTA timestamp format: %r", raw)
+    return None
 
 
 def _flag(val: Any) -> bool:

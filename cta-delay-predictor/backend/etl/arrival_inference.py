@@ -38,8 +38,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 _TZ = pytz.timezone("America/Chicago")
 _LOOKBACK_HOURS = 2   # only process snapshots from last N hours
-_ETA_THRESHOLD_S = 60 # treat run as "arrived" when ETA ≤ this
-_MATCH_WINDOW_MIN = 30 # ± minutes for GTFS schedule matching
+_ETA_THRESHOLD_S = 60  # treat run as "arrived" when ETA ≤ this
+_DISAPPEAR_THRESHOLD_S = 360  # also treat as arrived if run vanishes within this window
+_MATCH_WINDOW_MIN = 30  # ± minutes for GTFS schedule matching
 
 
 def _hhmmss_to_seconds(s: str) -> int:
@@ -93,30 +94,22 @@ def _find_scheduled_arrival(
     sod_s = local_dt.hour * 3600 + local_dt.minute * 60 + local_dt.second
     window_s = _MATCH_WINDOW_MIN * 60
 
-    rows = (
-        db.query(GtfsStopTime)
-        .join(
-            text(
-                "JOIN gtfs_trips ON gtfs_trips.trip_id = gtfs_stop_times.trip_id"
-                " JOIN gtfs_routes ON gtfs_routes.route_id = gtfs_trips.route_id"
-            )
-        )
-        .filter(GtfsStopTime.stop_id == station_id)
-        .all()
-    )
-    # Fallback: plain query without join complexity
+    # station_id is the CTA mapid (parent station, e.g. "40900").
+    # GTFS stop_times references platform-level stop_ids (e.g. "30173") whose
+    # parent_station column equals the mapid. We must join through gtfs_stops.
     stop_time_rows = (
         db.execute(
             text(
                 """
                 SELECT st.arrival_time, st.trip_id
                 FROM gtfs_stop_times st
-                JOIN gtfs_trips t ON t.trip_id = st.trip_id
-                WHERE st.stop_id = :stop_id
+                JOIN gtfs_stops   gs ON gs.stop_id  = st.stop_id
+                JOIN gtfs_trips    t ON t.trip_id   = st.trip_id
+                WHERE gs.parent_station = :station_id
                   AND t.service_id = ANY(:sids)
                 """
             ),
-            {"stop_id": station_id, "sids": list(service_ids)},
+            {"station_id": station_id, "sids": list(service_ids)},
         ).fetchall()
     )
 
@@ -139,13 +132,18 @@ def _find_scheduled_arrival(
     return best_dt
 
 
-def infer_arrivals(lookback_hours: int = _LOOKBACK_HOURS) -> int:
+def infer_arrivals(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
     """
     Scan recent snapshots and write new ActualArrival rows.
 
+    Pass lookback_hours=None to process all data (full reprocess).
     Returns the number of new rows inserted.
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        if lookback_hours is not None
+        else datetime.min.replace(tzinfo=timezone.utc)
+    )
     inserted = 0
 
     with SessionLocal() as db:
@@ -178,13 +176,16 @@ def infer_arrivals(lookback_hours: int = _LOOKBACK_HOURS) -> int:
                 if eta_s <= _ETA_THRESHOLD_S:
                     arrival_snap = snap
                     break
-                # Check if run disappears in the next snapshot
+                # Check if run disappears in the next snapshot.
+                # Use _DISAPPEAR_THRESHOLD_S (360s) rather than 120s so that
+                # trains predicted 2–5 min away at poll time are still caught
+                # when the 5-minute GitHub Actions cron misses the ≤60s window.
                 if i + 1 < len(snaps):
                     next_snaps_for_key = [
                         s for s in snaps[i + 1:]
                         if s.station_id == station_id
                     ]
-                    if not next_snaps_for_key and eta_s < 120:
+                    if not next_snaps_for_key and eta_s < _DISAPPEAR_THRESHOLD_S:
                         arrival_snap = snap
                         break
 
@@ -236,5 +237,11 @@ def infer_arrivals(lookback_hours: int = _LOOKBACK_HOURS) -> int:
 
 
 if __name__ == "__main__":
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--all", action="store_true", help="Process all historical data, not just the last 2 hours")
+    p.add_argument("--hours", type=int, default=None)
+    args = p.parse_args()
     init_db()
-    infer_arrivals()
+    hours = None if args.all else (args.hours or _LOOKBACK_HOURS)
+    infer_arrivals(lookback_hours=hours)
