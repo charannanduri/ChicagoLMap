@@ -51,20 +51,25 @@ settings = get_settings()
 
 
 def _load_data() -> pd.DataFrame:
+    # hour_of_day / day_of_week are already in ALL_FEATURES (via NUMERIC_FEATURES);
+    # dict.fromkeys deduplicates while preserving order.
+    select_cols = list(dict.fromkeys(
+        ALL_FEATURES
+        + [TARGET_REGRESSION, TARGET_CLASSIFICATION, "snapshot_time", "route", "station_id"]
+    ))
+    import sqlalchemy
     with SessionLocal() as db:
-        rows = db.execute(
-            __import__("sqlalchemy").text(
-                f"""
-                SELECT {', '.join(ALL_FEATURES + [TARGET_REGRESSION, TARGET_CLASSIFICATION, 'snapshot_time', 'route', 'station_id', 'hour_of_day', 'day_of_week'])}
-                FROM model_features
-                WHERE delay_minutes IS NOT NULL
-                ORDER BY snapshot_time
-                """
+        result = db.execute(
+            sqlalchemy.text(
+                f"SELECT {', '.join(select_cols)} FROM model_features "
+                f"WHERE delay_minutes IS NOT NULL ORDER BY snapshot_time"
             )
-        ).fetchall()
+        )
+        rows = result.fetchall()
+        col_names = list(result.keys())  # capture before session closes
     if not rows:
         raise RuntimeError("No labeled rows in model_features. Collect data first.")
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=col_names)
     return df
 
 
