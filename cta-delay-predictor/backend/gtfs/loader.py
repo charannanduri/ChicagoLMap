@@ -34,8 +34,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 settings = get_settings()
 
-# Only load these route_ids from GTFS (Red and Blue lines)
-_TARGET_ROUTES = {"Red", "Blue"}
+# Load all CTA rail routes from GTFS
+_TARGET_ROUTES = {"Red", "Blue", "G", "Brn", "Org", "P", "Pink", "Y"}
 
 
 def _download_gtfs(url: str) -> bytes:
