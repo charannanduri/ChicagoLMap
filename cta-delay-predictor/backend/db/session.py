@@ -5,11 +5,16 @@ from backend.config import get_settings
 
 _settings = get_settings()
 
+_is_pooler = ":6543/" in _settings.database_url
+
 engine = create_engine(
     _settings.database_url,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    # pgBouncer transaction-mode pooler (Supabase port 6543) works best with
+    # NullPool or a small pool — persistent connections across requests cause
+    # "prepared statement already exists" errors on transaction poolers.
+    pool_size=1 if _is_pooler else 10,
+    max_overflow=4 if _is_pooler else 20,
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
