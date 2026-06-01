@@ -84,10 +84,16 @@ def _prep(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=[TARGET_REGRESSION])
 
 
-def _time_split(df: pd.DataFrame, test_days: int = 14) -> tuple[pd.DataFrame, pd.DataFrame]:
-    df = df.sort_values("snapshot_time")
-    cutoff = df["snapshot_time"].iloc[-1] - pd.Timedelta(days=test_days)
-    return df[df["snapshot_time"] <= cutoff], df[df["snapshot_time"] > cutoff]
+def _time_split(df: pd.DataFrame, test_frac: float = 0.2) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Temporal train/test split by row fraction.
+
+    Sorts by time and uses the last `test_frac` of rows as the test set.
+    More robust than a fixed day window when data history is short (e.g.
+    the first week of collection) — always guarantees non-empty train/test.
+    """
+    df = df.sort_values("snapshot_time").reset_index(drop=True)
+    split = max(1, int(len(df) * (1 - test_frac)))
+    return df.iloc[:split].copy(), df.iloc[split:].copy()
 
 
 class BaselineMedianModel:
