@@ -20,11 +20,16 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import matplotlib
+matplotlib.use("Agg")  # headless — no display needed in CI
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from sklearn.linear_model import Ridge
 from sklearn.metrics import (
     accuracy_score,
+    confusion_matrix,
     f1_score,
     mean_absolute_error,
     root_mean_squared_error,
@@ -120,6 +125,110 @@ class BaselineMedianModel:
 MIN_ROWS = 500
 
 
+# ── evaluation helpers ────────────────────────────────────────────────────────
+
+def _write_step_summary(metrics: dict[str, dict]) -> None:
+    """Write a markdown metrics table to $GITHUB_STEP_SUMMARY (CI only)."""
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    lines = [
+        "## CTA Delay Predictor — Training Results\n",
+        "| Model | MAE (min) | RMSE (min) |",
+        "|---|---|---|",
+    ]
+    for name, m in metrics.items():
+        lines.append(f"| {name} | {m.get('mae', '—'):.3f} | {m.get('rmse', '—'):.3f} |")
+    lines += [
+        "",
+        "### Classifier (XGBoost)",
+        f"- Accuracy: **{metrics.get('xgb_classifier', {}).get('acc', 0):.3f}**",
+        f"- Macro F1:  **{metrics.get('xgb_classifier', {}).get('f1', 0):.3f}**",
+        "",
+        "> Plots saved to `ml_models/plots/` in the artifact.",
+    ]
+    with open(path, "a") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _save_plots(
+    model_dir: Path,
+    xgb_reg: XGBRegressor,
+    y_test: pd.Series,
+    y_pred_reg: np.ndarray,
+    y_test_cls: pd.Series,
+    y_pred_cls: np.ndarray,
+    label_map: dict[str, int],
+) -> None:
+    """Generate and save 4 evaluation plots to model_dir/plots/."""
+    plot_dir = model_dir / "plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    inv_label = {v: k for k, v in label_map.items()}
+    class_names = [inv_label.get(i, str(i)) for i in sorted(inv_label)]
+
+    sns.set_theme(style="darkgrid", palette="muted")
+
+    # ── 1. Feature importance ─────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 6))
+    importances = pd.Series(xgb_reg.feature_importances_, index=ALL_FEATURES)
+    importances.sort_values().tail(15).plot.barh(ax=ax, color="#4A9EFF")
+    ax.set_title("XGBoost Feature Importance (top 15)", fontsize=13, fontweight="bold")
+    ax.set_xlabel("Importance score")
+    fig.tight_layout()
+    fig.savefig(plot_dir / "feature_importance.png", dpi=120)
+    plt.close(fig)
+
+    # ── 2. Actual vs predicted (scatter + diagonal) ───────────────────────────
+    fig, ax = plt.subplots(figsize=(7, 7))
+    lo = min(y_test.min(), y_pred_reg.min()) - 1
+    hi = max(y_test.max(), y_pred_reg.max()) + 1
+    ax.scatter(y_test, y_pred_reg, alpha=0.35, s=18, color="#4A9EFF", label="Predictions")
+    ax.plot([lo, hi], [lo, hi], "r--", linewidth=1.5, label="Perfect fit")
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_xlabel("Actual delay (min)")
+    ax.set_ylabel("Predicted delay (min)")
+    ax.set_title("Actual vs Predicted Delay", fontsize=13, fontweight="bold")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(plot_dir / "actual_vs_predicted.png", dpi=120)
+    plt.close(fig)
+
+    # ── 3. Residuals distribution ─────────────────────────────────────────────
+    residuals = y_pred_reg - y_test.values
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(residuals, bins=40, color="#4A9EFF", edgecolor="white", linewidth=0.4)
+    ax.axvline(0, color="red", linestyle="--", linewidth=1.5)
+    ax.set_xlabel("Residual (predicted − actual, minutes)")
+    ax.set_ylabel("Count")
+    ax.set_title("Prediction Residuals", fontsize=13, fontweight="bold")
+    ax.text(
+        0.97, 0.95, f"Mean: {residuals.mean():.2f} min\nStd: {residuals.std():.2f} min",
+        transform=ax.transAxes, ha="right", va="top",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7),
+    )
+    fig.tight_layout()
+    fig.savefig(plot_dir / "residuals.png", dpi=120)
+    plt.close(fig)
+
+    # ── 4. Confusion matrix ───────────────────────────────────────────────────
+    cm = confusion_matrix(y_test_cls, y_pred_cls, labels=sorted(inv_label))
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(
+        cm, annot=True, fmt="d", cmap="Blues",
+        xticklabels=class_names, yticklabels=class_names, ax=ax,
+    )
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    ax.set_title("Classifier Confusion Matrix\n(ahead / on_time / behind)", fontsize=13, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(plot_dir / "confusion_matrix.png", dpi=120)
+    plt.close(fig)
+
+    logger.info("Plots saved to %s", plot_dir)
+
+
 def train() -> None:
     logger.info("Loading labeled features…")
     df_raw = _load_data()
@@ -150,15 +259,19 @@ def train() -> None:
     model_dir = Path(settings.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
 
+    summary: dict[str, dict] = {}
+
     def _reg_metrics(name: str, y_true: pd.Series, y_pred: np.ndarray) -> None:
         mae = mean_absolute_error(y_true, y_pred)
         rmse = root_mean_squared_error(y_true, y_pred)
         logger.info("[%s] MAE=%.3f min  RMSE=%.3f min", name, mae, rmse)
+        summary[name] = {"mae": mae, "rmse": rmse}
 
     def _cls_metrics(name: str, y_true: pd.Series, y_pred: np.ndarray) -> None:
         acc = accuracy_score(y_true, y_pred)
         f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
         logger.info("[%s] Accuracy=%.3f  Macro-F1=%.3f", name, acc, f1)
+        summary[name] = {"acc": acc, "f1": f1}
 
     # 1. Baseline median
     logger.info("Training BaselineMedianModel…")
@@ -225,6 +338,10 @@ def train() -> None:
     joblib.dump(label_map, model_dir / "label_map.joblib")
 
     logger.info("All models saved to %s", model_dir)
+
+    y_pred_reg = xgb_reg.predict(X_test)
+    _save_plots(model_dir, xgb_reg, y_test, y_pred_reg, y_test_cls, y_pred_cls, label_map)
+    _write_step_summary(summary)
 
 
 if __name__ == "__main__":
