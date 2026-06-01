@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chicago L — Live Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="/config.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -151,6 +152,22 @@
         [data-route="y"].active    .route-dot { box-shadow: 0 0 9px var(--yel); }
         [data-route="all"].active  .route-dot { box-shadow: 0 0 9px rgba(255,255,255,0.8); }
 
+        /* ── Env toggle (only shown on deployed sites) ─────────────────────── */
+        #env-toggle {
+            position: absolute; bottom: 28px; right: 18px; z-index: 1000;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+            padding: 5px 10px; border-radius: 20px; cursor: pointer;
+            border: none; background: none; font-family: inherit;
+            display: none; /* shown by JS when SITE_ENV is set */
+        }
+        #env-toggle.dev  {
+            background: rgba(255,149,0,0.18); color: #ff9500;
+            border: 1px solid rgba(255,149,0,0.35);
+        }
+        #env-toggle.prod {
+            background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.45);
+            border: 1px solid rgba(255,255,255,0.15);
+        }
         /* ── Status pill ───────────────────────────────────────────────────── */
         #status-pill {
             position: absolute; bottom: 28px; left: 50%;
@@ -368,6 +385,7 @@
 </div>
 
 <!-- Status pill — bottom centre -->
+<button id="env-toggle" onclick="handleEnvToggle()"></button>
 <div id="status-pill" class="glass">
     <div class="live-dot" id="live-dot"></div>
     <span class="status-text" id="status-text">Connecting…</span>
@@ -747,6 +765,40 @@ routeButtons.forEach(btn => {
         currentIntervalId = setInterval(() => refreshTrains(routes), UPDATE_MS);
     });
 });
+
+// ── Env toggle ────────────────────────────────────────────────────────────────
+(function initEnvToggle() {
+    const env = (window.SITE_ENV || '').toLowerCase();
+    const btn = document.getElementById('env-toggle');
+    if (!env) return; // localhost — hide toggle entirely
+
+    if (env === 'development') {
+        btn.textContent = '● DEV';
+        btn.className = 'dev';
+        btn.title = 'Switch to production site';
+        btn.style.display = 'block';
+    } else if (env === 'production' && window.DEV_URL) {
+        btn.textContent = 'DEV MODE';
+        btn.className = 'prod';
+        btn.title = 'Switch to dev site';
+        btn.style.display = 'block';
+    }
+})();
+
+function handleEnvToggle() {
+    const env = (window.SITE_ENV || '').toLowerCase();
+    if (env === 'development') {
+        if (window.PROD_URL) window.location.href = window.PROD_URL;
+    } else {
+        const pwd = prompt('Dev site password:');
+        if (pwd === null) return;
+        if (pwd === '0000') {
+            if (window.DEV_URL) window.location.href = window.DEV_URL;
+        } else {
+            alert('Incorrect password.');
+        }
+    }
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 setActiveButton(currentRoute);

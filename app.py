@@ -45,6 +45,11 @@ if not CTA_API_KEY:
 # When configured, station arrival popups will include ML-based delay forecasts.
 DELAY_PREDICTOR_URL = os.environ.get("DELAY_PREDICTOR_URL", "").rstrip("/")
 
+# Deployment environment — injected by Render, empty on localhost.
+SITE_ENV  = os.environ.get("SITE_ENV", "")       # "production" | "development" | ""
+PROD_URL  = os.environ.get("PROD_URL", "")        # https://chicagolmap.onrender.com
+DEV_URL   = os.environ.get("DEV_URL", "")         # https://chicagolmap-dev.onrender.com
+
 ALLOWED_ROUTES = {"red", "blue", "g", "brn", "p", "y", "pnk", "o"}
 
 # Cache station maps so we only parse the KMZ once per route
@@ -621,7 +626,15 @@ def serve_index():
 # def serve_static(filename):
 #     return send_from_directory('static', filename)
 
+@app.route('/config.js')
+def config_js():
+    """Serves environment config as a JS file so index.html knows which site it's on."""
+    js = f"""window.SITE_ENV="{SITE_ENV}";window.PROD_URL="{PROD_URL}";window.DEV_URL="{DEV_URL}";"""
+    return js, 200, {'Content-Type': 'application/javascript; charset=utf-8',
+                     'Cache-Control': 'no-store'}
+
+
 # --- Main Execution ---
 if __name__ == '__main__':
-    # Runs the development server. For production, use a proper WSGI server like Gunicorn.
-    app.run(debug=True, port=5001) # Using port 5001 to avoid conflicts if 5000 is common 
+    port = int(os.environ.get("PORT", 5001))
+    app.run(debug=(SITE_ENV != "production"), port=port)

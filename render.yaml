@@ -1,4 +1,49 @@
 services:
+  # ── Flask map app — production (auto-deploys from main branch) ──────────────
+  - type: web
+    name: chicagolmap
+    runtime: python
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind "0.0.0.0:$PORT" --workers 2
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: CTA_API_KEY
+        sync: false           # set in Render dashboard
+      - key: DELAY_PREDICTOR_URL
+        sync: false           # set to https://cta-delay-api.onrender.com
+      - key: SITE_ENV
+        value: production
+      - key: DEV_URL
+        value: https://chicagolmap-dev.onrender.com
+      - key: PROD_URL
+        value: https://chicagolmap.onrender.com
+
+  # ── Flask map app — dev (auto-deploys from dev branch) ─────────────────────
+  - type: web
+    name: chicagolmap-dev
+    runtime: python
+    branch: dev
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind "0.0.0.0:$PORT" --workers 2
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: CTA_API_KEY
+        sync: false
+      - key: DELAY_PREDICTOR_URL
+        sync: false
+      - key: SITE_ENV
+        value: development
+      - key: PROD_URL
+        value: https://chicagolmap.onrender.com
+      - key: DEV_URL
+        value: https://chicagolmap-dev.onrender.com
+
+  # ── Delay predictor FastAPI ──────────────────────────────────────────────────
   - type: web
     name: cta-delay-api
     runtime: python
@@ -8,10 +53,10 @@ services:
     plan: free
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.0
+        value: "3.12.0"
       - key: DATABASE_URL
-        sync: false         # set manually in Render dashboard
+        sync: false
       - key: CTA_TRAIN_TRACKER_KEY
-        sync: false         # set manually in Render dashboard
+        sync: false
       - key: ALLOWED_ORIGINS
-        sync: false         # set to your Vercel URL once deployed
+        value: "https://chicagolmap.onrender.com,https://chicagolmap-dev.onrender.com"
