@@ -138,7 +138,9 @@ def _write_step_summary(metrics: dict[str, dict]) -> None:
         "|---|---|---|",
     ]
     for name, m in metrics.items():
-        lines.append(f"| {name} | {m.get('mae', '—'):.3f} | {m.get('rmse', '—'):.3f} |")
+        if "mae" not in m:
+            continue  # skip classifier entry (has acc/f1, not mae/rmse)
+        lines.append(f"| {name} | {m['mae']:.3f} | {m['rmse']:.3f} |")
     lines += [
         "",
         "### Classifier (XGBoost)",
