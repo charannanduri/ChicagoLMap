@@ -214,16 +214,22 @@ def _save_plots(
     fig.savefig(plot_dir / "residuals.png", dpi=120)
     plt.close(fig)
 
-    # ── 4. Confusion matrix ───────────────────────────────────────────────────
+    # ── 4. Confusion matrix (counts + row-% so per-class recall is clear) ────
     cm = confusion_matrix(y_test_cls, y_pred_cls, labels=sorted(inv_label))
+    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True).clip(min=1)
+    annot = np.array(
+        [[f"{cm[i,j]}\n({cm_norm[i,j]:.0%})" for j in range(cm.shape[1])]
+         for i in range(cm.shape[0])]
+    )
     fig, ax = plt.subplots(figsize=(6, 5))
     sns.heatmap(
-        cm, annot=True, fmt="d", cmap="Blues",
+        cm_norm, annot=annot, fmt="", cmap="Blues",
         xticklabels=class_names, yticklabels=class_names, ax=ax,
+        vmin=0, vmax=1,
     )
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
-    ax.set_title("Classifier Confusion Matrix\n(ahead / on_time / behind)", fontsize=13, fontweight="bold")
+    ax.set_title("Classifier Confusion Matrix\n(count + row %)", fontsize=13, fontweight="bold")
     fig.tight_layout()
     fig.savefig(plot_dir / "confusion_matrix.png", dpi=120)
     plt.close(fig)
@@ -255,8 +261,20 @@ def train() -> None:
 
     # Status labels (map string → int for XGB classifier)
     label_map = {lbl: i for i, lbl in enumerate(STATUS_LABELS)}
+    inv_label_map = {v: k for k, v in label_map.items()}
     y_train_cls = train_df[TARGET_CLASSIFICATION].map(label_map).fillna(1)
     y_test_cls = test_df[TARGET_CLASSIFICATION].map(label_map).fillna(1)
+
+    # Inverse-frequency sample weights so the classifier doesn't ignore the
+    # minority "ahead" / "behind" classes (on_time typically dominates 70-80%).
+    _counts = y_train_cls.value_counts()
+    _n, _k = len(y_train_cls), len(_counts)
+    _class_weights = {cls: _n / (_k * cnt) for cls, cnt in _counts.items()}
+    sample_weight_train = y_train_cls.map(_class_weights)
+    logger.info(
+        "Classifier class weights: %s",
+        {inv_label_map.get(k, k): f"{v:.2f}" for k, v in _class_weights.items()},
+    )
 
     model_dir = Path(settings.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -333,7 +351,12 @@ def train() -> None:
         n_jobs=-1,
         verbosity=0,
     )
-    xgb_cls.fit(X_train, y_train_cls, eval_set=[(X_test, y_test_cls)], verbose=False)
+    xgb_cls.fit(
+        X_train, y_train_cls,
+        sample_weight=sample_weight_train,
+        eval_set=[(X_test, y_test_cls)],
+        verbose=False,
+    )
     y_pred_cls = xgb_cls.predict(X_test)
     _cls_metrics("xgb_classifier", y_test_cls, y_pred_cls)
     joblib.dump(xgb_cls, model_dir / "xgb_classifier.joblib")
