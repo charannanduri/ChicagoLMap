@@ -41,8 +41,9 @@ build/
 *.egg-info/
 
 # CTA delay predictor — ML artifacts
-cta-delay-predictor/ml_models/
-cta-delay-predictor/**/*.joblib
+# .joblib model files ARE tracked so Render can deploy them.
+# Plots and large data files stay ignored.
+cta-delay-predictor/ml_models/plots/
 
 # CTA delay predictor — Node / Next.js
 cta-delay-predictor/frontend/node_modules/

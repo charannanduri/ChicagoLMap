@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     gtfs_url: str = "https://www.transitchicago.com/downloads/sch_data/google_transit.zip"
     model_dir: str = "ml_models"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 @lru_cache
