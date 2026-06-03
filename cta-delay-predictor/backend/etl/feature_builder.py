@@ -64,6 +64,28 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
             .all()
         )
 
+        # Pre-load existing model_feature keys to avoid per-row duplicate queries
+        existing_keys: set[tuple] = set(
+            db.query(ModelFeature.run_number, ModelFeature.station_id, ModelFeature.snapshot_time)
+            .filter(ModelFeature.snapshot_time >= since)
+            .all()
+        )
+
+        # Pre-load actual arrivals for the window into a dict to avoid per-row queries
+        actual_window_start = since - timedelta(minutes=5)
+        actual_window_end = datetime.now(timezone.utc) + timedelta(hours=1)
+        actuals_by_run_station: dict[tuple[str, str], list[ActualArrival]] = {}
+        for a in (
+            db.query(ActualArrival)
+            .filter(
+                ActualArrival.actual_arrival_time >= actual_window_start,
+                ActualArrival.actual_arrival_time <= actual_window_end,
+            )
+            .order_by(ActualArrival.actual_arrival_time)
+            .all()
+        ):
+            actuals_by_run_station.setdefault((a.run_number or "", a.station_id or ""), []).append(a)
+
         # Headway lookup: (snapshot_time, station_id, direction) → sorted arr_t list
         headway_lookup: dict[tuple, list] = {}
         for snap in snaps:
@@ -101,34 +123,23 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
             local_dt = snap.snapshot_time.astimezone(_TZ)
             station_obj = get_station(int(station)) if station.isdigit() else None
 
-            # Look up actual arrival for this run+station
-            actual: ActualArrival | None = (
-                db.query(ActualArrival)
-                .filter(
-                    ActualArrival.run_number == run,
-                    ActualArrival.station_id == station,
-                    ActualArrival.actual_arrival_time >= snap.snapshot_time - timedelta(minutes=5),
-                    ActualArrival.actual_arrival_time <= snap.snapshot_time + timedelta(hours=1),
-                )
-                .order_by(ActualArrival.actual_arrival_time)
-                .first()
+            # Skip duplicate rows (set lookup instead of per-row DB query)
+            if (run, station, snap.snapshot_time) in existing_keys:
+                continue
+
+            # Find matching actual arrival in pre-loaded dict
+            snap_start = snap.snapshot_time - timedelta(minutes=5)
+            snap_end = snap.snapshot_time + timedelta(hours=1)
+            actual: ActualArrival | None = next(
+                (
+                    a for a in actuals_by_run_station.get((run, station), [])
+                    if snap_start <= a.actual_arrival_time <= snap_end
+                ),
+                None,
             )
 
             delay_min = float(actual.delay_minutes) if actual and actual.delay_minutes is not None else None
             status = _delay_status(delay_min)
-
-            # Skip duplicate rows
-            exists = (
-                db.query(ModelFeature)
-                .filter(
-                    ModelFeature.run_number == run,
-                    ModelFeature.station_id == station,
-                    ModelFeature.snapshot_time == snap.snapshot_time,
-                )
-                .first()
-            )
-            if exists:
-                continue
 
             direction_code = int(snap.direction) if snap.direction and snap.direction.isdigit() else None
 
