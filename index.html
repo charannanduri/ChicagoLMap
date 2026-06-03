@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Chicago L — Live Tracker</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="/config.js"></script>
@@ -334,21 +334,26 @@
         .arr-cta-label { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.28); letter-spacing: 0.06em; text-transform: uppercase; }
         .arr-cta-delayed { font-size: 10px; font-weight: 600; color: #ff453a; }
         /* Scheduled pill — plain static border */
+        /* Both pills share size so they match exactly */
+        .arr-sched-pill, .arr-ml-pill {
+            padding: 3px 8px;
+            border-radius: 7px;
+            display: inline-flex; flex-direction: column;
+            align-items: center; gap: 0;
+            flex-shrink: 0;
+            min-width: 64px;
+            box-sizing: border-box;
+        }
         .arr-sched-pill {
             border: 1px solid rgba(255,255,255,0.22);
-            border-radius: 6px; padding: 2px 6px;
-            display: inline-flex; flex-direction: column;
-            align-items: center; gap: 0; flex-shrink: 0;
         }
-        /* ML prediction pill — rainbow border slowly rotates around the edge.
-           Uses a large circle (no corners) so the rotation is seamless. */
+        /* ML prediction pill — translucent spinning rainbow border + outer glow */
         .arr-ml-pill {
-            position: relative; border-radius: 6px;
-            padding: 2px 6px; display: inline-flex; flex-direction: column;
-            align-items: center; gap: 0;
-            background: #0f0f1a; isolation: isolate;
-            flex-shrink: 0; overflow: hidden;
+            position: relative;
+            background: #0f0f1a; isolation: isolate; overflow: hidden;
+            animation: ml-glow 8s linear infinite;
         }
+        /* Translucent rainbow ring — circle so rotation is seamless */
         .arr-ml-pill::before {
             content: ''; position: absolute;
             width: 600%; height: 600%;
@@ -356,19 +361,31 @@
             border-radius: 50%;
             transform: translate(-50%, -50%) rotate(0deg);
             background: conic-gradient(
-                hsl(0,90%,65%), hsl(60,90%,65%), hsl(120,90%,65%),
-                hsl(180,90%,65%), hsl(240,90%,65%), hsl(300,90%,65%),
-                hsl(360,90%,65%)
+                hsl(0,80%,65%), hsl(60,80%,65%), hsl(120,80%,65%),
+                hsl(180,80%,65%), hsl(240,80%,65%), hsl(300,80%,65%),
+                hsl(360,80%,65%)
             );
+            opacity: 0.55;   /* translucent — ring is visible but not harsh */
             animation: spin-border 8s linear infinite;
             z-index: -1;
         }
+        /* Dark interior cutout that makes the gradient look like a border */
         .arr-ml-pill::after {
             content: ''; position: absolute;
-            inset: 1.5px; border-radius: 5px;
+            inset: 1.5px; border-radius: 5.5px;
             background: #0f0f1a; z-index: 0;
         }
         @keyframes spin-border { to { transform: translate(-50%,-50%) rotate(360deg); } }
+        /* Outer glow cycles through rainbow colours in sync with the spinning border */
+        @keyframes ml-glow {
+            0%   { box-shadow: 0 0 7px 1px rgba(255,100,100,0.30); }
+            17%  { box-shadow: 0 0 7px 1px rgba(255,215,50,0.30); }
+            33%  { box-shadow: 0 0 7px 1px rgba(80,210,120,0.30); }
+            50%  { box-shadow: 0 0 7px 1px rgba(70,155,255,0.30); }
+            67%  { box-shadow: 0 0 7px 1px rgba(185,100,255,0.30); }
+            83%  { box-shadow: 0 0 7px 1px rgba(255,100,180,0.30); }
+            100% { box-shadow: 0 0 7px 1px rgba(255,100,100,0.30); }
+        }
         .arr-pill-label { font-size: 8px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; line-height: 1.2; position: relative; z-index: 1; }
         .arr-sched-pill .arr-pill-label { color: rgba(255,255,255,0.35); }
         .arr-ml-pill    .arr-pill-label { color: rgba(255,255,255,0.45); }
@@ -479,12 +496,13 @@
                             border-radius: 13px; justify-content: center; }
             .route-button:hover { transform: none; }
 
-            /* Status pill + env toggle */
-            #status-pill { bottom: 14px; }
-            #env-toggle  { bottom: 14px; right: 14px; }
+            /* Status pill + env toggle — sit above the browser nav bar */
+            #status-pill { bottom: max(14px, calc(env(safe-area-inset-bottom, 0px) + 14px)); }
+            #env-toggle  { bottom: max(14px, calc(env(safe-area-inset-bottom, 0px) + 14px)); right: 14px; }
 
-            /* Station panel */
-            #station-panel { max-height: 56vh; }
+            /* Station panel — list content padded so last item clears browser toolbar */
+            #station-panel { max-height: 56dvh; }
+            #station-list  { padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 16px)); }
 
             /* Popup */
             .leaflet-popup-content-wrapper { max-width: 90vw !important; }
