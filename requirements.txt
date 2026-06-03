@@ -1,6 +1,7 @@
 Flask
 gunicorn
 requests
+pytz
 fastkml
 beautifulsoup4
 shapely 

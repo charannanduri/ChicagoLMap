@@ -14,7 +14,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
+import pytz
 import requests
+
+_CHICAGO = pytz.timezone("America/Chicago")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
@@ -51,15 +54,20 @@ def _to_float(v) -> float | None:
 
 def _eta_minutes(arr_t_str: str | None) -> int | None:
     """Convert CTA arrival time string to minutes from now.
-    JSON API returns ISO format ('2026-05-30T22:12:45');
-    XML API (legacy) returns 'YYYYMMDD HH:MM:SS'.
+
+    CTA timestamps are Chicago local time (naive, no tz suffix).
+    We attach America/Chicago so the subtraction is correct on any server
+    timezone — Render runs UTC which would make all ETAs appear negative
+    without this localisation.
     """
     if not arr_t_str:
         return None
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y%m%d %H:%M:%S"):
         try:
-            arr_dt = datetime.strptime(arr_t_str, fmt)
-            return max(0, int((arr_dt - datetime.now()).total_seconds() // 60))
+            naive = datetime.strptime(arr_t_str, fmt)
+            arr_dt = _CHICAGO.localize(naive)
+            now    = datetime.now(_CHICAGO)
+            return max(0, int((arr_dt - now).total_seconds() // 60))
         except ValueError:
             continue
     return None
