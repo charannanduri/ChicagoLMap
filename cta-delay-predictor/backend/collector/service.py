@@ -20,7 +20,7 @@ from backend.config import get_settings
 from backend.db.init_db import init_db
 from backend.db.models import ArrivalSnapshot, TrainPosition
 from backend.db.session import SessionLocal
-from backend.stations import ALL_STATIONS, stations_for_route
+from backend.stations import load_gtfs_stations
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -31,12 +31,12 @@ logging.basicConfig(
 settings = get_settings()
 
 
-def _poll_arrivals(client: CtaTrainClient) -> None:
-    """Poll ttarrivals for every Red + Blue station and persist snapshots."""
+def _poll_arrivals(client: CtaTrainClient, stations: list) -> None:
+    """Poll ttarrivals for every station and persist snapshots."""
     now = datetime.now(timezone.utc)
     rows: list[ArrivalSnapshot] = []
 
-    for station in ALL_STATIONS:
+    for station in stations:
         etas = client.get_arrivals(station.mapid, max_results=10)
         for eta in etas:
             rows.append(
@@ -66,12 +66,15 @@ def _poll_arrivals(client: CtaTrainClient) -> None:
         logger.warning("No arrival snapshots collected at %s", now.isoformat())
 
 
+_ALL_ROUTES = ("Red", "Blue", "G", "Brn", "Org", "P", "Pink", "Y")
+
+
 def _poll_positions(client: CtaTrainClient) -> None:
-    """Poll ttpositions for Red and Blue lines and persist positions."""
+    """Poll ttpositions for all 8 L lines and persist positions."""
     now = datetime.now(timezone.utc)
     rows: list[TrainPosition] = []
 
-    for route in ("Red", "Blue"):
+    for route in _ALL_ROUTES:
         positions = client.get_positions(route)
         for p in positions:
             rows.append(
@@ -105,8 +108,9 @@ def run() -> None:
     if not key:
         raise RuntimeError("CTA_TRAIN_TRACKER_KEY is not set")
 
+    stations = load_gtfs_stations()
     interval = settings.poll_interval_seconds
-    logger.info("Starting collector — polling every %ss", interval)
+    logger.info("Starting collector — polling every %ss across %d stations", interval, len(stations))
 
     scheduler = BlockingScheduler()
     client = CtaTrainClient(key)
@@ -115,7 +119,7 @@ def run() -> None:
         _poll_arrivals,
         "interval",
         seconds=interval,
-        args=[client],
+        args=[client, stations],
         id="arrivals",
         next_run_time=datetime.now(timezone.utc),
     )

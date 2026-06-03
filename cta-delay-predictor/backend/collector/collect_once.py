@@ -15,7 +15,7 @@ from backend.config import get_settings
 from backend.db.init_db import init_db
 from backend.db.models import ArrivalSnapshot, TrainPosition
 from backend.db.session import SessionLocal
-from backend.stations import ALL_STATIONS
+from backend.stations import load_gtfs_stations
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,9 +24,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+_ALL_ROUTES = ("Red", "Blue", "G", "Brn", "Org", "P", "Pink", "Y")
+
+
 def _collect_arrivals(client: CtaTrainClient, now: datetime) -> list[ArrivalSnapshot]:
     rows: list[ArrivalSnapshot] = []
-    for station in ALL_STATIONS:
+    for station in load_gtfs_stations():
         for eta in client.get_arrivals(station.mapid, max_results=10):
             rows.append(
                 ArrivalSnapshot(
@@ -50,7 +53,7 @@ def _collect_arrivals(client: CtaTrainClient, now: datetime) -> list[ArrivalSnap
 
 def _collect_positions(client: CtaTrainClient, now: datetime) -> list[TrainPosition]:
     rows: list[TrainPosition] = []
-    for route in ("Red", "Blue"):
+    for route in _ALL_ROUTES:
         for p in client.get_positions(route):
             rows.append(
                 TrainPosition(

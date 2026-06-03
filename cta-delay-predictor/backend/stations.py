@@ -1,24 +1,27 @@
 """
-Static registry of Red and Blue Line parent stations (mapid = CTA parent station ID).
+Static registry of CTA L parent stations (mapid = CTA parent station ID).
 
-The authoritative source for station IDs is the CTA GTFS feed (stops.txt).
-This registry is used to seed polling targets before GTFS is loaded and as a
-lookup table for the API. mapid values are the CTA "parent station" IDs used
-by the ttarrivals.aspx endpoint's `mapid` parameter.
+The authoritative source is the CTA GTFS feed loaded into gtfs_stops.
+load_gtfs_stations() queries that table and returns all parent stations for
+all 8 lines at runtime. The hardcoded RED_LINE / BLUE_LINE lists serve as a
+fallback when the DB is unavailable (e.g. first cold start before GTFS load).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class Station:
     mapid: int
     name: str
-    route: str          # "Red" | "Blue"
-    stop_sequence: int  # approximate north-to-south / O'Hare-to-Forest-Park order
-    branch: str = ""    # "ohare" | "forest_park" | "" (Red has no branches)
+    route: str = ""         # "Red" | "Blue" | "G" | … — empty for GTFS-loaded entries
+    stop_sequence: int = 0  # approximate order; 0 for GTFS-loaded entries
+    branch: str = ""        # "ohare" | "forest_park" | ""
 
 
 RED_LINE: list[Station] = [
@@ -104,5 +107,32 @@ def get_station(mapid: int) -> Station | None:
 
 
 def stations_for_route(route: str) -> list[Station]:
-    """Return ordered station list for 'Red' or 'Blue'."""
+    """Return ordered station list for a given route from the hardcoded registry."""
     return [s for s in ALL_STATIONS if s.route.lower() == route.lower()]
+
+
+def load_gtfs_stations() -> list[Station]:
+    """Return all parent stations from the GTFS data already in the DB.
+
+    Queries gtfs_stops WHERE location_type = 1 (parent/station nodes).
+    Falls back to the hardcoded ALL_STATIONS list if the DB is unavailable
+    or GTFS has not been loaded yet.
+    """
+    try:
+        from backend.db.models import GtfsStop
+        from backend.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            rows = db.query(GtfsStop).filter(GtfsStop.location_type == 1).all()
+            if rows:
+                stations: list[Station] = []
+                for r in rows:
+                    try:
+                        stations.append(Station(mapid=int(r.stop_id), name=r.stop_name or ""))
+                    except (ValueError, TypeError):
+                        continue
+                logger.info("Loaded %d parent stations from GTFS (all lines).", len(stations))
+                return stations
+    except Exception as exc:
+        logger.warning("GTFS station load failed, falling back to hardcoded list: %s", exc)
+    return ALL_STATIONS
