@@ -85,6 +85,24 @@
             margin-bottom: 8px;
         }
 
+        /* ── Mobile menu toggle button ─────────────────────────────────────── */
+        #menu-btn {
+            display: none; /* visible only in mobile media query */
+            position: absolute; top: 16px; right: 16px; z-index: 1002;
+            width: 46px; height: 46px; border-radius: 50%;
+            align-items: center; justify-content: center;
+            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(255,255,255,0.10);
+            backdrop-filter: blur(28px) saturate(200%) brightness(1.08);
+            -webkit-backdrop-filter: blur(28px) saturate(200%) brightness(1.08);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.22),
+                        inset 0 1px 0 rgba(255,255,255,0.38), inset 0 -1px 0 rgba(0,0,0,0.14);
+            font-size: 20px; color: rgba(255,255,255,0.88);
+            cursor: pointer; transition: transform 0.18s ease, background 0.18s ease;
+        }
+        #menu-btn:active { transform: scale(0.92); }
+        #menu-btn.open   { background: rgba(255,255,255,0.18); }
+
         /* ── Route buttons ─────────────────────────────────────────────────── */
         .route-button {
             display: flex; align-items: center; gap: 10px;
@@ -152,20 +170,31 @@
         [data-route="y"].active    .route-dot { box-shadow: 0 0 9px var(--yel); }
         [data-route="all"].active  .route-dot { box-shadow: 0 0 9px rgba(255,255,255,0.8); }
 
-        /* ── Station list panel ────────────────────────────────────────────── */
+        /* ── Station list panel — full Liquid Glass treatment ─────────────── */
         #station-panel {
             position: absolute; bottom: 0; left: 0; right: 0; z-index: 1002;
-            background: rgba(10,13,22,0.92);
-            backdrop-filter: blur(28px) saturate(180%);
-            -webkit-backdrop-filter: blur(28px) saturate(180%);
-            border-top: 1px solid rgba(255,255,255,0.14);
-            border-radius: 20px 20px 0 0;
+            background: rgba(10,13,22,0.82);
+            backdrop-filter: blur(36px) saturate(220%) brightness(1.04);
+            -webkit-backdrop-filter: blur(36px) saturate(220%) brightness(1.04);
+            border-top: 1px solid rgba(255,255,255,0.18);
+            border-radius: 22px 22px 0 0;
+            box-shadow: 0 -8px 32px rgba(0,0,0,0.45), 0 -2px 8px rgba(0,0,0,0.22),
+                        inset 0 1px 0 rgba(255,255,255,0.28);
             display: flex; flex-direction: column;
             max-height: 48vh;
             transform: translateY(100%);
             transition: transform 0.38s cubic-bezier(0.32,0.72,0,1);
             pointer-events: none;
+            overflow: hidden;
         }
+        /* Liquid Glass catch-light on panel top edge */
+        #station-panel::before {
+            content: '';
+            position: absolute; top: 0; left: 0; right: 0; height: 60px;
+            background: linear-gradient(to bottom, rgba(255,255,255,0.09), transparent);
+            border-radius: 22px 22px 0 0; pointer-events: none; z-index: 0;
+        }
+        #station-panel > * { position: relative; z-index: 1; }
         #station-panel.open { transform: translateY(0); pointer-events: all; }
         #panel-handle {
             padding: 10px 18px 8px; cursor: pointer; flex-shrink: 0;
@@ -414,6 +443,53 @@
             border-radius: 8px 0 0 0 !important; padding: 3px 8px !important;
         }
         .leaflet-control-attribution a { color: rgba(255,255,255,0.45) !important; }
+
+        /* ── Mobile layout ─────────────────────────────────────────────────── */
+        @media (max-width: 640px) {
+
+            /* Show the menu toggle button */
+            #menu-btn { display: flex; }
+
+            /* Shrink title — hide subtitle */
+            #title-badge { top: 16px; left: 16px; padding: 8px 14px; border-radius: 16px; }
+            #title-badge .t-main { font-size: 14px; }
+            #title-badge .t-sub  { display: none; }
+
+            /* Controls become a full-width dropdown from the top */
+            #controls {
+                top: 0; left: 0; right: 0;
+                border-radius: 0 0 28px 28px;
+                padding: 70px 14px 18px;
+                min-width: unset;
+                transform: translateY(-110%);
+                transition: transform 0.38s cubic-bezier(0.32,0.72,0,1);
+                background: rgba(8,11,22,0.92);
+                backdrop-filter: blur(36px) saturate(220%) brightness(1.06);
+                -webkit-backdrop-filter: blur(36px) saturate(220%) brightness(1.06);
+                box-shadow: 0 14px 44px rgba(0,0,0,0.6), inset 0 -1px 0 rgba(255,255,255,0.10);
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px;
+                z-index: 1001;
+            }
+            #controls.open { transform: translateY(0); }
+            .controls-label { grid-column: 1 / -1; margin-bottom: 2px; }
+            [data-route="all"] { grid-column: 1 / -1; }
+            .route-button { margin-bottom: 0; padding: 12px 10px; font-size: 12px;
+                            border-radius: 13px; justify-content: center; }
+            .route-button:hover { transform: none; }
+
+            /* Status pill + env toggle */
+            #status-pill { bottom: 14px; }
+            #env-toggle  { bottom: 14px; right: 14px; }
+
+            /* Station panel */
+            #station-panel { max-height: 56vh; }
+
+            /* Popup */
+            .leaflet-popup-content-wrapper { max-width: 90vw !important; }
+            .leaflet-control-zoom { display: none; }
+        }
     </style>
 </head>
 <body>
@@ -439,6 +515,9 @@
     <button data-route="pnk"  class="route-button"><span class="route-dot"></span>Pink Line</button>
     <button data-route="y"    class="route-button"><span class="route-dot"></span>Yellow Line</button>
 </div>
+
+<!-- Mobile menu button — only shown on small screens -->
+<button id="menu-btn" onclick="toggleMobileMenu()" aria-label="Toggle line selector">☰</button>
 
 <!-- Station list panel — slides up from bottom when a specific line is selected -->
 <div id="station-panel">
@@ -903,6 +982,27 @@ function selectStation(mapid, lat, lon) {
 
 // ── Route selection ──────────────────────────────────────────────────────────
 const routeButtons = document.querySelectorAll('.route-button');
+const _menuBtn     = document.getElementById('menu-btn');
+const _controlsEl  = document.getElementById('controls');
+let   _menuOpen    = false;
+
+function toggleMobileMenu() {
+    _menuOpen = !_menuOpen;
+    _controlsEl.classList.toggle('open', _menuOpen);
+    _menuBtn.classList.toggle('open', _menuOpen);
+    _menuBtn.textContent = _menuOpen ? '✕' : '☰';
+}
+
+function closeMobileMenu() {
+    if (!_menuOpen) return;
+    _menuOpen = false;
+    _controlsEl.classList.remove('open');
+    _menuBtn.classList.remove('open');
+    _menuBtn.textContent = '☰';
+}
+
+// Tap anywhere on the map to close the mobile menu
+document.getElementById('map').addEventListener('click', closeMobileMenu);
 
 function setActiveButton(route) {
     routeButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.route === route));
@@ -911,6 +1011,7 @@ function setActiveButton(route) {
 routeButtons.forEach(btn => {
     btn.addEventListener('click', () => {
         const route = btn.dataset.route;
+        closeMobileMenu();            // always close menu on selection
         if (route === currentRoute) return;
         currentRoute = route;
         setActiveButton(route);
@@ -923,7 +1024,6 @@ routeButtons.forEach(btn => {
             fullRefresh(routes);
         } else {
             fullRefresh(routes).then(() => {
-                // Request location (uses cache after first grant), then show panel
                 requestLocation(loc => openStationPanel(route, loc));
             });
         }
