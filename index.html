@@ -600,6 +600,24 @@ const liveMarkers = new Map();
 let currentRoute      = 'all';
 let currentIntervalId = null;
 
+// ── "Updated X ago" timer ─────────────────────────────────────────────────────
+let lastRefreshTime   = null;   // Date.now() ms after each successful refresh
+let lastTrainCount    = 0;
+let lastPositionSource = null;
+
+function _agoText() {
+    if (!lastRefreshTime) return null;
+    const s = Math.floor((Date.now() - lastRefreshTime) / 1000);
+    if (s < 5)  return 'just now';
+    if (s < 60) return `${s}s ago`;
+    return `${Math.floor(s / 60)}m ago`;
+}
+
+setInterval(() => {
+    if (!lastRefreshTime || lastTrainCount <= 0) return;
+    setStatus(`${lastTrainCount} train${lastTrainCount !== 1 ? 's' : ''} · updated ${_agoText()}`, lastPositionSource);
+}, 1000);
+
 // ── Geolocation + station list state ─────────────────────────────────────────
 let userLoc            = null;   // {lat, lon} once granted
 let locRequested       = false;
@@ -912,7 +930,10 @@ async function refreshTrains(routes) {
         const total = diffUpdateTrains(routeTrainMap);
 
         if (total > 0) {
-            setStatus(`${total} train${total !== 1 ? 's' : ''} · updates every 15s`, dominantSource);
+            lastRefreshTime    = Date.now();
+            lastTrainCount     = total;
+            lastPositionSource = dominantSource;
+            setStatus(`${total} train${total !== 1 ? 's' : ''} · updated just now`, dominantSource);
         } else {
             setStatus('No active trains found', null);
         }
