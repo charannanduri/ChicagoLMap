@@ -27,8 +27,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytz
 from sqlalchemy import text
-from sqlalchemy.orm import Session
-
 from backend.db.init_db import init_db
 from backend.db.models import ActualArrival, ArrivalSnapshot, GtfsCalendar, GtfsStopTime
 from backend.db.session import SessionLocal
@@ -73,64 +71,6 @@ def _active_service_ids(db: Session, date: datetime) -> set[str]:
     return result
 
 
-def _find_scheduled_arrival(
-    db: Session,
-    station_id: str,
-    actual_dt: datetime,
-    service_ids: set[str],
-    run_number: str,
-) -> datetime | None:
-    """
-    Find the GTFS scheduled arrival for the station closest in time to actual_dt.
-
-    We query stop_times whose arrival_time (as seconds since midnight) falls
-    within _MATCH_WINDOW_MIN minutes of actual_dt's time-of-day, for a trip
-    whose service_id is active today.
-    """
-    if not service_ids:
-        return None
-
-    local_dt = actual_dt.astimezone(_TZ)
-    sod_s = local_dt.hour * 3600 + local_dt.minute * 60 + local_dt.second
-    window_s = _MATCH_WINDOW_MIN * 60
-
-    # station_id is the CTA mapid (parent station, e.g. "40900").
-    # GTFS stop_times references platform-level stop_ids (e.g. "30173") whose
-    # parent_station column equals the mapid. We must join through gtfs_stops.
-    stop_time_rows = (
-        db.execute(
-            text(
-                """
-                SELECT st.arrival_time, st.trip_id
-                FROM gtfs_stop_times st
-                JOIN gtfs_stops   gs ON gs.stop_id  = st.stop_id
-                JOIN gtfs_trips    t ON t.trip_id   = st.trip_id
-                WHERE gs.parent_station = :station_id
-                  AND t.service_id = ANY(:sids)
-                """
-            ),
-            {"station_id": station_id, "sids": list(service_ids)},
-        ).fetchall()
-    )
-
-    best_dt: datetime | None = None
-    best_diff = float("inf")
-    for arr_time_str, _trip_id in stop_time_rows:
-        if not arr_time_str:
-            continue
-        try:
-            sched_s = _hhmmss_to_seconds(arr_time_str)
-        except (ValueError, IndexError):
-            continue
-        diff = abs(sched_s - sod_s)
-        if diff < window_s and diff < best_diff:
-            best_diff = diff
-            base = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-            best_dt = _TZ.localize(
-                base.replace(tzinfo=None) + timedelta(seconds=sched_s)
-            )
-    return best_dt
-
 
 def infer_arrivals(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
     """
@@ -153,6 +93,75 @@ def infer_arrivals(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
             .order_by(ArrivalSnapshot.run_number, ArrivalSnapshot.station_id, ArrivalSnapshot.snapshot_time)
             .all()
         )
+
+        # Pre-load existing ActualArrival keys to avoid N+1 duplicate checks
+        existing_arrivals: set[tuple] = set(
+            db.query(ActualArrival.run_number, ActualArrival.station_id, ActualArrival.actual_arrival_time)
+            .filter(ActualArrival.actual_arrival_time >= since)
+            .all()
+        )
+
+        # Cache service_ids by date string — same date → same result, no need to re-query
+        _service_id_cache: dict[str, set[str]] = {}
+
+        def _cached_service_ids(dt: datetime) -> set[str]:
+            key = dt.astimezone(_TZ).strftime("%Y%m%d")
+            if key not in _service_id_cache:
+                _service_id_cache[key] = _active_service_ids(db, dt)
+            return _service_id_cache[key]
+
+        # Cache GTFS stop-time rows by (station_id, date_str) — same station on same
+        # service day always returns the same rows, no need to re-query per group
+        _gtfs_cache: dict[tuple[str, str], list] = {}
+
+        def _cached_gtfs_rows(station_id: str, date_str: str, service_ids: set[str]) -> list:
+            key = (station_id, date_str)
+            if key not in _gtfs_cache:
+                _gtfs_cache[key] = db.execute(
+                    text(
+                        """
+                        SELECT st.arrival_time, st.trip_id
+                        FROM gtfs_stop_times st
+                        JOIN gtfs_stops   gs ON gs.stop_id  = st.stop_id
+                        JOIN gtfs_trips    t ON t.trip_id   = st.trip_id
+                        WHERE gs.parent_station = :station_id
+                          AND t.service_id = ANY(:sids)
+                        """
+                    ),
+                    {"station_id": station_id, "sids": list(service_ids)},
+                ).fetchall()
+            return _gtfs_cache[key]
+
+        def _find_scheduled_arrival_fast(
+            station_id: str,
+            actual_dt: datetime,
+            service_ids: set[str],
+        ) -> datetime | None:
+            if not service_ids:
+                return None
+            local_dt = actual_dt.astimezone(_TZ)
+            date_str = local_dt.strftime("%Y%m%d")
+            sod_s = local_dt.hour * 3600 + local_dt.minute * 60 + local_dt.second
+            window_s = _MATCH_WINDOW_MIN * 60
+
+            stop_time_rows = _cached_gtfs_rows(station_id, date_str, service_ids)
+            best_dt: datetime | None = None
+            best_diff = float("inf")
+            for arr_time_str, _trip_id in stop_time_rows:
+                if not arr_time_str:
+                    continue
+                try:
+                    sched_s = _hhmmss_to_seconds(arr_time_str)
+                except (ValueError, IndexError):
+                    continue
+                diff = abs(sched_s - sod_s)
+                if diff < window_s and diff < best_diff:
+                    best_diff = diff
+                    base = local_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                    best_dt = _TZ.localize(
+                        base.replace(tzinfo=None) + timedelta(seconds=sched_s)
+                    )
+            return best_dt
 
         # Group by (run_number, station_id)
         groups: dict[tuple[str, str], list[ArrivalSnapshot]] = {}
@@ -193,28 +202,19 @@ def infer_arrivals(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
                 continue
 
             actual_dt = arrival_snap.arr_t
-            # Build service_ids for the arrival date
-            service_ids = _active_service_ids(db, actual_dt)
-            scheduled_dt = _find_scheduled_arrival(db, station_id, actual_dt, service_ids, run_number)
+
+            # Skip if already exists (set lookup instead of per-row DB query)
+            if (run_number, station_id, actual_dt) in existing_arrivals:
+                continue
+
+            service_ids = _cached_service_ids(actual_dt)
+            scheduled_dt = _find_scheduled_arrival_fast(station_id, actual_dt, service_ids)
 
             delay_min = None
             if scheduled_dt is not None:
                 delay_min = round(
                     (actual_dt - scheduled_dt).total_seconds() / 60, 2
                 )
-
-            # Skip if already exists
-            exists = (
-                db.query(ActualArrival)
-                .filter(
-                    ActualArrival.run_number == run_number,
-                    ActualArrival.station_id == station_id,
-                    ActualArrival.actual_arrival_time == actual_dt,
-                )
-                .first()
-            )
-            if exists:
-                continue
 
             db.add(
                 ActualArrival(
