@@ -73,7 +73,7 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
         )
 
         # Pre-load actual arrivals for the window into a dict to avoid per-row queries
-        actual_window_start = since - timedelta(minutes=5)
+        actual_window_start = since if since <= datetime.min.replace(tzinfo=timezone.utc) + timedelta(hours=1) else since - timedelta(minutes=5)
         actual_window_end = datetime.now(timezone.utc) + timedelta(hours=1)
         actuals_by_run_station: dict[tuple[str, str], list[ActualArrival]] = {}
         for a in (
