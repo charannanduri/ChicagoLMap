@@ -211,6 +211,7 @@ class ModelFeature(Base):
     snapshot_time = Column(DateTime(timezone=True), nullable=False)
 
     # Static
+    route_code = Column(Integer)      # 0=Red 1=Blue 2=Green 3=Brown 4=Orange 5=Purple 6=Pink 7=Yellow
     stop_sequence = Column(Integer)
     is_red_line = Column(Boolean)
     is_blue_line = Column(Boolean)

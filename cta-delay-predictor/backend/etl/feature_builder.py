@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from backend.db.init_db import init_db
 from backend.db.models import ActualArrival, ArrivalSnapshot, ModelFeature
 from backend.db.session import SessionLocal
+from backend.ml.features import ROUTE_CODE
 from backend.stations import get_station
 
 logger = logging.getLogger(__name__)
@@ -155,17 +156,19 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
                 if idx < len(arr_ts) - 1:
                     hw_after = round((arr_ts[idx + 1] - snap.arr_t).total_seconds() / 60, 2)
 
+            route_str = snap.route or ""
             db.add(
                 ModelFeature(
                     run_number=run,
-                    route=snap.route or "",
+                    route=route_str,
                     direction=snap.direction or "",
                     station_id=station,
                     station_name=station_obj.name if station_obj else None,
                     snapshot_time=snap.snapshot_time,
+                    route_code=ROUTE_CODE.get(route_str, -1),
                     stop_sequence=station_obj.stop_sequence if station_obj else None,
-                    is_red_line=(snap.route or "").lower() == "red",
-                    is_blue_line=(snap.route or "").lower() == "blue",
+                    is_red_line=route_str.lower() == "red",
+                    is_blue_line=route_str.lower() == "blue",
                     direction_code=direction_code,
                     hour_of_day=local_dt.hour,
                     day_of_week=local_dt.weekday(),

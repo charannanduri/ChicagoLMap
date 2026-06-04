@@ -3,8 +3,15 @@ Feature column definitions shared between training and prediction.
 """
 from __future__ import annotations
 
+# Maps CTA route string → stable integer code for XGBoost feature
+ROUTE_CODE: dict[str, int] = {
+    "Red": 0, "Blue": 1, "G": 2, "Brn": 3,
+    "Org": 4, "P": 5, "Pink": 6, "Y": 7,
+}
+
 # Numeric features fed to the model
 NUMERIC_FEATURES = [
+    "route_code",
     "stop_sequence",
     "direction_code",
     "hour_of_day",
