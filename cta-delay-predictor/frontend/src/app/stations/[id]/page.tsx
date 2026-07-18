@@ -4,13 +4,13 @@ import StationBoard from "@/components/StationBoard";
 import Link from "next/link";
 
 interface Props {
-  params: { id: string };
-  searchParams: { route?: string };
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ route?: string }>;
 }
 
 export default async function StationPage({ params, searchParams }: Props) {
-  const { id } = params;
-  const route = searchParams.route;
+  const { id } = await params;
+  const { route } = await searchParams;
 
   let data = null;
   let error: string | null = null;
@@ -24,7 +24,10 @@ export default async function StationPage({ params, searchParams }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Link href="/" className="text-gray-400 hover:text-white text-sm">
+        <Link
+          href="/"
+          className="inline-flex items-center min-h-[44px] text-gray-400 hover:text-white text-sm"
+        >
           ← All stations
         </Link>
       </div>
