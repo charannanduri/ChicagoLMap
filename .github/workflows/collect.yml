@@ -1,17 +1,26 @@
 name: Collect CTA Data
 
+# GitHub throttles short cron schedules — a "*/5" cron fires roughly hourly
+# in practice. So we schedule hourly and poll in a loop INSIDE the job
+# (backend.collector.collect_loop), which gives a true 5-minute cadence.
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes
-  workflow_dispatch:
+    - cron: '0 * * * *'
+  workflow_dispatch:          # allow manual trigger from GitHub UI
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Never let two collection windows overlap (a delayed run starting while
+# the previous one is still looping would race on the same insert keys).
+concurrency:
+  group: collect-cta-data
+  cancel-in-progress: false
+
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 58       # loop runs ~50 min + ETL; must end before next hourly run
 
     steps:
       - uses: actions/checkout@v4
@@ -25,12 +34,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r cta-delay-predictor/requirements-collector.txt
 
-      - name: Poll CTA API and store data
+      - name: Poll CTA API every 5 minutes for ~50 minutes
         working-directory: cta-delay-predictor
         env:
           CTA_TRAIN_TRACKER_KEY: ${{ secrets.CTA_TRAIN_TRACKER_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m backend.collector.collect_once
+          LOOP_MINUTES: '50'
+          POLL_INTERVAL_SECONDS: '300'
+        run: python -m backend.collector.collect_loop
 
       - name: Infer actual arrivals from snapshots
         working-directory: cta-delay-predictor

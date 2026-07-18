@@ -27,6 +27,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytz
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
+
 from backend.db.init_db import init_db
 from backend.db.models import ActualArrival, ArrivalSnapshot, GtfsCalendar, GtfsStopTime
 from backend.db.session import SessionLocal
@@ -85,6 +88,8 @@ def infer_arrivals(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
         else datetime.min.replace(tzinfo=timezone.utc)
     )
     inserted = 0
+    pending_rows: list[dict] = []
+    seen_keys: set[tuple] = set()
 
     with SessionLocal() as db:
         rows = (
@@ -216,19 +221,37 @@ def infer_arrivals(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
                     (actual_dt - scheduled_dt).total_seconds() / 60, 2
                 )
 
-            db.add(
-                ActualArrival(
-                    run_number=run_number,
-                    route=arrival_snap.route or "",
-                    direction=arrival_snap.direction or "",
-                    station_id=station_id,
-                    scheduled_arrival_time=scheduled_dt,
-                    actual_arrival_time=actual_dt,
-                    delay_minutes=delay_min,
-                    source_confidence=0.9 if scheduled_dt else 0.5,
-                )
+            # Dedupe within this batch on the unique-constraint key
+            batch_key = (run_number, station_id, actual_dt)
+            if batch_key in seen_keys:
+                continue
+            seen_keys.add(batch_key)
+
+            pending_rows.append(
+                {
+                    "run_number": run_number,
+                    "route": arrival_snap.route or "",
+                    "direction": arrival_snap.direction or "",
+                    "station_id": station_id,
+                    "scheduled_arrival_time": scheduled_dt,
+                    "actual_arrival_time": actual_dt,
+                    "delay_minutes": delay_min,
+                    "source_confidence": 0.9 if scheduled_dt else 0.5,
+                    "created_at": datetime.now(timezone.utc),
+                }
             )
-            inserted += 1
+
+        # ON CONFLICT DO NOTHING makes re-processing the lookback window
+        # idempotent — rows already inserted by a previous run are skipped
+        # instead of blowing up the whole batch.
+        if pending_rows:
+            stmt = (
+                pg_insert(ActualArrival.__table__)
+                .values(pending_rows)
+                .on_conflict_do_nothing(constraint="uq_actual_arrival")
+            )
+            result = db.execute(stmt)
+            inserted = result.rowcount or 0
 
         db.commit()
 
