@@ -19,7 +19,7 @@ from backend.api.deps import get_db
 from backend.api.schemas import ArrivalItem, StationArrivalsResponse
 from backend.collector.cta_client import CtaTrainClient
 from backend.config import get_settings
-from backend.ml.features import ALL_FEATURES, BOOL_FEATURES, NUMERIC_FEATURES
+from backend.ml.features import ALL_FEATURES, BOOL_FEATURES, NUMERIC_FEATURES, ROUTE_CODE
 from backend.stations import get_station
 
 router = APIRouter()
@@ -57,6 +57,7 @@ def _build_feature_row(
         direction_code = int(eta["direction"])
 
     return {
+        "route_code": ROUTE_CODE.get(eta.get("route") or "", -1),
         "stop_sequence": station.stop_sequence if station else 0,
         "direction_code": direction_code or 0,
         "hour_of_day": local_dt.hour,
