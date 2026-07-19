@@ -67,9 +67,7 @@ if DELAY_PREDICTOR_URL:
     threading.Thread(target=_keep_predictor_warm, daemon=True).start()
 
 # Deployment environment — injected by Render, empty on localhost.
-SITE_ENV  = os.environ.get("SITE_ENV", "")       # "production" | "development" | ""
-PROD_URL  = os.environ.get("PROD_URL", "")        # https://chicagolmap.onrender.com
-DEV_URL   = os.environ.get("DEV_URL", "")         # https://chicagolmap-dev.onrender.com
+SITE_ENV = os.environ.get("SITE_ENV", "")        # "production" | ""
 
 ALLOWED_ROUTES = {"red", "blue", "g", "brn", "p", "y", "pnk", "o"}
 
@@ -649,14 +647,6 @@ def serve_index():
 # @app.route('/static/<path:filename>')
 # def serve_static(filename):
 #     return send_from_directory('static', filename)
-
-@app.route('/config.js')
-def config_js():
-    """Serves environment config as a JS file so index.html knows which site it's on."""
-    js = f"""window.SITE_ENV="{SITE_ENV}";window.PROD_URL="{PROD_URL}";window.DEV_URL="{DEV_URL}";"""
-    return js, 200, {'Content-Type': 'application/javascript; charset=utf-8',
-                     'Cache-Control': 'no-store'}
-
 
 # --- Main Execution ---
 if __name__ == '__main__':
