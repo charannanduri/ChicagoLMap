@@ -16,32 +16,6 @@ services:
         sync: false           # set to https://cta-delay-api.onrender.com
       - key: SITE_ENV
         value: production
-      - key: DEV_URL
-        value: https://chicagolmap-dev.onrender.com
-      - key: PROD_URL
-        value: https://chicagolmap.onrender.com
-
-  # ── Flask map app — dev (auto-deploys from dev branch) ─────────────────────
-  - type: web
-    name: chicagolmap-dev
-    runtime: python
-    branch: dev
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind "0.0.0.0:$PORT" --workers 2
-    plan: free
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.0"
-      - key: CTA_API_KEY
-        sync: false
-      - key: DELAY_PREDICTOR_URL
-        sync: false
-      - key: SITE_ENV
-        value: development
-      - key: PROD_URL
-        value: https://chicagolmap.onrender.com
-      - key: DEV_URL
-        value: https://chicagolmap-dev.onrender.com
 
   # ── Delay predictor FastAPI ──────────────────────────────────────────────────
   - type: web
