@@ -15,6 +15,8 @@ import SwiftUI
 /// direction label header, followed by up to three `ArrivalRow`s.
 struct DirectionSection: View {
     let group: DirectionGroup
+    /// When set, each row shows a "Board" button that starts trip tracking.
+    var onBoard: ((Arrival, CTALine?) -> Void)? = nil
 
     private var visibleArrivals: [Arrival] {
         Array(group.trains.prefix(3))
@@ -32,7 +34,11 @@ struct DirectionSection: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(visibleArrivals.enumerated()), id: \.offset) { index, arrival in
-                        ArrivalRow(arrival: arrival, line: group.line)
+                        ArrivalRow(
+                            arrival: arrival,
+                            line: group.line,
+                            onBoard: onBoard.map { cb in { cb(arrival, group.line) } }
+                        )
                         if index < visibleArrivals.count - 1 {
                             Divider()
                                 .overlay(Color.white.opacity(0.08))
@@ -84,6 +90,9 @@ struct DirectionSection: View {
 struct ArrivalRow: View {
     let arrival: Arrival
     let line: CTALine?
+    var onBoard: (() -> Void)? = nil
+
+    @AppStorage(timeFormatDefaultsKey) private var timeFormat: TimeFormat = .relative
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -99,15 +108,40 @@ struct ArrivalRow: View {
 
             Spacer(minLength: 0)
 
-            if let run = arrival.runNumber {
-                Text("Run \(run)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(Theme.secondaryText)
-                    .padding(.top, 3)
+            VStack(alignment: .trailing, spacing: 8) {
+                if let run = arrival.runNumber {
+                    Text("Run \(run)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                if onBoard != nil, arrival.runNumber != nil {
+                    boardButton
+                }
             }
+            .padding(.top, 3)
         }
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
+    }
+
+    private var boardButton: some View {
+        Button {
+            onBoard?()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "figure.wave")
+                    .font(.caption2.weight(.bold))
+                Text("Board")
+                    .font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(line?.color ?? .white)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 30)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .liquidGlassCapsule(interactive: true)
+        .accessibilityLabel("Board this train")
     }
 
     private var destinationLine: some View {
@@ -155,15 +189,27 @@ struct ArrivalRow: View {
     /// The CTA-reported ETA, shown in the bordered "Scheduled" pill.
     private var scheduledValue: String {
         if arrival.isApproaching { return "Now" }
-        if let eta = arrival.etaMinutes { return "\(eta) min" }
-        return "—"
+        switch timeFormat {
+        case .clock:
+            if let clock = CTATime.clockString(arrival.scheduledDate) { return clock }
+            fallthrough
+        case .relative:
+            if let eta = arrival.etaMinutes { return "\(eta) min" }
+            return "—"
+        }
     }
 
     /// The ML-adjusted ETA for the tinted "Predicted" pill;
     /// nil hides the pill entirely.
     private var predictedValue: String? {
         guard let predicted = arrival.predictedMinutes else { return nil }
-        if arrival.isApproaching || predicted == 0 { return "Now" }
-        return "~\(predicted) min"
+        if arrival.isApproaching { return "Now" }
+        switch timeFormat {
+        case .clock:
+            if let clock = CTATime.clockString(arrival.predictedDate) { return clock }
+            fallthrough
+        case .relative:
+            return predicted == 0 ? "Now" : "~\(predicted) min"
+        }
     }
 }

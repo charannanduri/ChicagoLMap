@@ -23,6 +23,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 
 _POSITIONS_URL = "http://lapi.transitchicago.com/api/1.0/ttpositions.aspx"
 _ARRIVALS_URL  = "http://lapi.transitchicago.com/api/1.0/ttarrivals.aspx"
+_FOLLOW_URL    = "http://lapi.transitchicago.com/api/1.0/ttfollow.aspx"
 
 # User-facing route key → CTA API rt value
 _API_RT: dict[str, str] = {
@@ -269,6 +270,77 @@ def get_train_positions_via_arrivals(
 
     logging.info(f"Arrivals fallback: {len(seen)} unique trains for '{route}'.")
     return list(seen.values())
+
+
+def follow_run(api_key: str, run_number: str) -> dict:
+    """
+    Follow a single train by run number via ttfollow (JSON).
+
+    Returns the train's current position plus every UPCOMING stop to the end of
+    its run, in travel order. Works underground because CTA's tracker predicts
+    arrivals from schedule + signal data even where GPS is unavailable.
+
+    Shape:
+        {
+          "run_number": str,
+          "route": str | None,          # CTA rt, e.g. "Red"
+          "destination": str | None,
+          "position": {"lat","lon","heading"} | None,
+          "stops": [ {station_id, station_name, stop_desc, dest_name,
+                      direction_code, eta_minutes, arrival_time,
+                      is_approaching, is_scheduled, is_delayed}, ... ]
+        }
+    Returns {} on any error.
+    """
+    params = {"key": api_key, "runnumber": run_number, "outputType": "JSON"}
+    try:
+        resp = requests.get(_FOLLOW_URL, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.error(f"Follow request failed for run={run_number}: {exc}")
+        return {}
+
+    ctatt = data.get("ctatt", {})
+    if not _ctatt_ok(ctatt, f"follow/{run_number}"):
+        return {}
+
+    pos = ctatt.get("position") or {}
+    route = None
+    destination = None
+    stops: list[dict] = []
+    for eta in _as_list(ctatt.get("eta")):
+        route = route or eta.get("rt")
+        destination = destination or eta.get("destNm")
+        arr_t = eta.get("arrT")
+        stops.append({
+            "station_id":     _to_int(eta.get("staId")),
+            "station_name":   eta.get("staNm"),
+            "stop_desc":      eta.get("stpDe"),
+            "dest_name":      eta.get("destNm"),
+            "direction_code": _to_int(eta.get("trDr")),
+            "eta_minutes":    _eta_minutes(arr_t),
+            "arrival_time":   arr_t,
+            "is_approaching": eta.get("isApp") == "1",
+            "is_scheduled":   eta.get("isSch") == "1",
+            "is_delayed":     eta.get("isDly") == "1",
+        })
+
+    position = None
+    if pos:
+        position = {
+            "lat":     _to_float(pos.get("lat")),
+            "lon":     _to_float(pos.get("lon")),
+            "heading": _to_int(pos.get("heading")),
+        }
+
+    return {
+        "run_number":  run_number,
+        "route":       route,
+        "destination": destination,
+        "position":    position,
+        "stops":       stops,
+    }
 
 
 # Backward-compat shim used by the hardware /api/station/<mapid>/next endpoint

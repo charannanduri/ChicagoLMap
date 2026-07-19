@@ -12,6 +12,8 @@ import SwiftUI
 
 struct StationSheet: View {
     @Bindable var model: AppModel
+    /// Invoked when the rider taps "Board" on an arrival.
+    var onBoard: ((Arrival, CTALine?) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -108,7 +110,7 @@ struct StationSheet: View {
             GlassGroup(spacing: 12) {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(arrivals.directions) { group in
-                        DirectionSection(group: group)
+                        DirectionSection(group: group, onBoard: onBoard)
                     }
                 }
             }

@@ -194,6 +194,8 @@ struct Arrival: Decodable, Identifiable {
     let p10Minutes: Double?
     let p90Minutes: Double?
     let predictorActive: Bool
+    /// Raw CTA arrival timestamp (Chicago local, e.g. "2026-07-19T16:16:00").
+    let arrivalTimeRaw: String?
 
     var id: String { (runNumber ?? "?") + (destination ?? "") }
 
@@ -203,6 +205,15 @@ struct Arrival: Decodable, Identifiable {
         guard predictorActive, let delayMinutes else { return nil }
         let eta = Double(etaMinutes ?? 0)
         return max(0, Int((eta + delayMinutes).rounded()))
+    }
+
+    /// CTA-reported arrival time as a `Date`.
+    var scheduledDate: Date? { CTATime.parse(arrivalTimeRaw) }
+
+    /// ML-adjusted arrival time; non-nil only when a prediction exists.
+    var predictedDate: Date? {
+        guard predictorActive, let delayMinutes, let base = scheduledDate else { return nil }
+        return base.addingTimeInterval(delayMinutes * 60)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -217,6 +228,7 @@ struct Arrival: Decodable, Identifiable {
         case p10Minutes = "p10_minutes"
         case p90Minutes = "p90_minutes"
         case predictorActive = "predictor_active"
+        case arrivalTimeRaw = "arrival_time"
     }
 
     init(from decoder: Decoder) throws {
@@ -248,5 +260,6 @@ struct Arrival: Decodable, Identifiable {
         p10Minutes = try container.decodeIfPresent(Double.self, forKey: .p10Minutes)
         p90Minutes = try container.decodeIfPresent(Double.self, forKey: .p90Minutes)
         predictorActive = try container.decodeIfPresent(Bool.self, forKey: .predictorActive) ?? false
+        arrivalTimeRaw = try container.decodeIfPresent(String.self, forKey: .arrivalTimeRaw)
     }
 }

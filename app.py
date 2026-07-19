@@ -7,7 +7,7 @@ import threading
 import time
 import zipfile
 from io import BytesIO
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests as _requests
 from flask import Flask, jsonify, abort, send_from_directory, request
@@ -16,6 +16,7 @@ from cta_data import (
     get_station_arrivals,
     get_train_positions_via_arrivals,
     get_arrivals,
+    follow_run,
 )
 from fastkml import kml
 from fastkml.features import Placemark
@@ -449,6 +450,82 @@ def _try_predictor(mapid: int) -> dict[str, dict]:
             "p90_minutes":    item.get("p90_minutes"),
         }
     return result
+
+
+def _shift_iso(arr_t: str | None, delay_min) -> str | None:
+    """Add delay_min minutes to a CTA local ISO timestamp; None if unparseable."""
+    if not arr_t or delay_min is None:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y%m%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(arr_t, fmt)
+            return (dt + timedelta(minutes=float(delay_min))).strftime("%Y-%m-%dT%H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _predictor_run(run_number: str) -> dict[int, dict]:
+    """
+    Ask the predictor service for per-stop ML delays for a run.
+    Returns {station_id: {delay_minutes, delay_status}} or {} when the
+    predictor is unconfigured or unavailable (graceful degradation).
+    """
+    if not DELAY_PREDICTOR_URL:
+        return {}
+    try:
+        resp = _requests.get(
+            f"{DELAY_PREDICTOR_URL}/runs/{run_number}",
+            timeout=(3.05, 8),
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        logging.warning("Predictor run lookup failed for %s: %s", run_number, exc)
+        return {}
+
+    out: dict[int, dict] = {}
+    for stop in payload.get("stops", []):
+        sid = stop.get("station_id")
+        try:
+            sid_int = int(sid)
+        except (ValueError, TypeError):
+            continue
+        out[sid_int] = {
+            "delay_minutes": stop.get("model_delay_minutes"),
+            "delay_status":  stop.get("delay_status"),
+        }
+    return out
+
+
+@app.route('/api/run/<run_number>/follow', methods=['GET'])
+def api_run_follow(run_number):
+    """
+    Follow a train by run number: its upcoming stops with CTA ETAs enriched
+    with ML delay predictions and predicted clock times. Used by the iOS app's
+    trip-tracking view. Underground-tolerant (CTA tracker predicts without GPS).
+    """
+    if not CTA_API_KEY:
+        abort(500, description="CTA API key not configured.")
+
+    data = follow_run(CTA_API_KEY, run_number)
+    if not data:
+        return jsonify({
+            "run_number": run_number, "route": None, "destination": None,
+            "position": None, "stops": [],
+        })
+
+    predictions = _predictor_run(run_number)
+    for stop in data["stops"]:
+        sid = stop.get("station_id")
+        pred = predictions.get(sid, {}) if sid is not None else {}
+        delay = pred.get("delay_minutes")
+        stop["delay_minutes"] = delay
+        stop["delay_status"] = pred.get("delay_status")
+        stop["predictor_active"] = bool(pred)
+        stop["predicted_arrival_time"] = _shift_iso(stop.get("arrival_time"), delay)
+
+    return jsonify(data)
 
 
 @app.route('/api/station/<int:mapid>/arrivals', methods=['GET'])
