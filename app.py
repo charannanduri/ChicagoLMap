@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import logging
 import json
+import threading
+import time
 import zipfile
 from io import BytesIO
 from datetime import datetime, timezone
@@ -44,6 +46,25 @@ if not CTA_API_KEY:
 # Delay predictor service URL (set DELAY_PREDICTOR_URL env var when predictor is running).
 # When configured, station arrival popups will include ML-based delay forecasts.
 DELAY_PREDICTOR_URL = os.environ.get("DELAY_PREDICTOR_URL", "").rstrip("/")
+
+
+def _keep_predictor_warm() -> None:
+    """
+    Ping the predictor's /health every 10 minutes. Render's free tier spins
+    services down after ~15 min idle, and a cold start takes 30-60 s — far
+    longer than the popup request timeout, so predictions would silently
+    vanish. Keeping it warm while this app is awake avoids that.
+    """
+    while True:
+        try:
+            _requests.get(f"{DELAY_PREDICTOR_URL}/health", timeout=30)
+        except Exception as exc:
+            logging.warning("Predictor keep-warm ping failed: %s", exc)
+        time.sleep(600)
+
+
+if DELAY_PREDICTOR_URL:
+    threading.Thread(target=_keep_predictor_warm, daemon=True).start()
 
 # Deployment environment — injected by Render, empty on localhost.
 SITE_ENV  = os.environ.get("SITE_ENV", "")       # "production" | "development" | ""
@@ -405,14 +426,17 @@ def _try_predictor(mapid: int) -> dict[str, dict]:
     if not DELAY_PREDICTOR_URL:
         return {}
     try:
+        # Generous read timeout: the predictor free-tier instance queries the
+        # CTA API and the database per request, which routinely exceeds 2 s.
         resp = _requests.get(
             f"{DELAY_PREDICTOR_URL}/stations/{mapid}/arrivals",
             params={"n": 20},
-            timeout=2,
+            timeout=(3.05, 8),
         )
         resp.raise_for_status()
         payload = resp.json()
-    except Exception:
+    except Exception as exc:
+        logging.warning("Delay predictor unavailable for station %s: %s", mapid, exc)
         return {}
 
     result: dict[str, dict] = {}
