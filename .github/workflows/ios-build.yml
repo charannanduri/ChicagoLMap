@@ -60,16 +60,27 @@ jobs:
         working-directory: ios
         run: grep -E 'error:' xcodebuild.log | head -80 || tail -100 xcodebuild.log
 
-      - name: Zip simulator app (for Appetize.io or local simulator)
+      # GitHub always re-zips whatever upload-artifact is given, so we must NOT
+      # hand it a .zip (that double-zips → Appetize sees a zip, not a .app).
+      # We stage the .app next to a sibling readme so upload-artifact's
+      # least-common-ancestor is the staging dir — that keeps the
+      # "ChicagoLMap.app/" folder at the root of the downloaded artifact zip,
+      # which is exactly what Appetize expects.
+      - name: Stage simulator app for artifact
         working-directory: ios
         run: |
-          cd build/Build/Products/Debug-iphonesimulator
-          zip -r -q ChicagoLMap-Simulator.zip ChicagoLMap.app
+          mkdir -p artifact
+          cp -R build/Build/Products/Debug-iphonesimulator/ChicagoLMap.app artifact/
+          cat > artifact/HOW-TO-RUN.txt <<'EOF'
+          Upload this whole downloaded zip to https://appetize.io — it contains
+          ChicagoLMap.app at the root. If a tool asks for a .app specifically,
+          unzip first and point it at ChicagoLMap.app.
+          EOF
 
       - uses: actions/upload-artifact@v4
         with:
           name: ChicagoLMap-Simulator
-          path: ios/build/Build/Products/Debug-iphonesimulator/ChicagoLMap-Simulator.zip
+          path: ios/artifact
           retention-days: 90
 
   # ── TestFlight upload (manual; needs App Store Connect API key secrets) ──────
