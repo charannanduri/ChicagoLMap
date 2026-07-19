@@ -738,10 +738,8 @@ function renderArrivalsPopup(data) {
             </div>`;
 
             // ── ML prediction pill (rainbow spinning border) ──────────────
-            // Model was trained on Red + Blue only; hide pill for other lines
-            const ML_ROUTES = new Set(['Red', 'Blue']);
             let mlPill = '';
-            if (t.predictor_active && t.delay_minutes != null && ML_ROUTES.has(dir.route)) {
+            if (t.predictor_active && t.delay_minutes != null) {
                 const mlMin = Math.round((t.eta_minutes || 0) + (t.delay_minutes || 0));
                 const mlVal = t.is_approaching ? 'Now' : `~${Math.max(0, mlMin)} min`;
                 mlPill = `<div class="arr-ml-pill">

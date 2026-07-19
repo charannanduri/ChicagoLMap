@@ -5,4 +5,19 @@
 :root {
   --cta-red: #c60c30;
   --cta-blue: #00a1de;
+  /* Render form controls, scrollbars, and default UI in dark mode (iOS Safari). */
+  color-scheme: dark;
+}
+
+html {
+  /* Match the app background so iOS Safari's overscroll ("rubber band") bounce
+     and the safe-area regions exposed by viewport-fit=cover don't flash white. */
+  background-color: #030712; /* gray-950 */
+}
+
+body {
+  /* 100dvh accounts for iOS Safari's dynamic toolbar (top or bottom); the vh
+     line is a fallback for browsers without dvh support. */
+  min-height: 100vh;
+  min-height: 100dvh;
 }
