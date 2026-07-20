@@ -101,6 +101,12 @@ struct APIClient: Sendable {
         return try await fetch(url)
     }
 
+    /// GET /api/run/{run}/follow — a train's upcoming stops with ML predictions.
+    func runFollow(runNumber: String) async throws -> RunFollow {
+        let url = baseURL.appending(path: "api/run/\(runNumber)/follow")
+        return try await fetch(url)
+    }
+
     // MARK: Private helpers
 
     private func stops(for line: CTALine) async throws -> [StopRecord] {

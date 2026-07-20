@@ -17,6 +17,9 @@ final class AppModel {
     var isRefreshing: Bool = false
     var connectionLost: Bool = false
 
+    /// Live trip tracking (following a boarded train by run number).
+    let trip = TripTracker()
+
     var allSelected: Bool {
         selectedLines.count == CTALine.allCases.count
     }

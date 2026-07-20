@@ -46,6 +46,25 @@ struct TrainMapView: View {
         // glide smoothly between 15 s polls.
         .animation(.default, value: model.trains)
         .ignoresSafeArea()
+        // Zoom to a station when it's selected (tap on the map or "Board" flow).
+        .onChange(of: model.selectedStation) { _, station in
+            guard let station else { return }
+            zoom(to: station.coordinate)
+        }
+    }
+
+    /// Animates the camera to a tight region around `coordinate`, nudged south
+    /// so the station sits in the upper half of the screen, clear of the sheet
+    /// that covers the lower ~45%.
+    private func zoom(to coordinate: CLLocationCoordinate2D) {
+        let span = MKCoordinateSpan(latitudeDelta: 0.018, longitudeDelta: 0.018)
+        let center = CLLocationCoordinate2D(
+            latitude: coordinate.latitude - span.latitudeDelta * 0.28,
+            longitude: coordinate.longitude
+        )
+        withAnimation(.easeInOut(duration: 0.55)) {
+            position = .region(MKCoordinateRegion(center: center, span: span))
+        }
     }
 
     private var visiblePolylines: [RoutePolyline] {
