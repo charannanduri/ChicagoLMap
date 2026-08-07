@@ -110,7 +110,11 @@ struct StationSheet: View {
             GlassGroup(spacing: 12) {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(arrivals.directions) { group in
-                        DirectionSection(group: group, onBoard: onBoard)
+                        DirectionSection(
+                            group: group,
+                            onBoard: onBoard,
+                            stationId: model.selectedStation?.id ?? model.arrivals?.mapid
+                        )
                     }
                 }
             }
