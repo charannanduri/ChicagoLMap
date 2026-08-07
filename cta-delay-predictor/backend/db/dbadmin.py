@@ -139,6 +139,33 @@ def diagnose() -> dict:
         except Exception as exc:  # noqa: BLE001
             _log(f"  <raw_json check failed: {exc}>")
 
+        # Pipeline health: is the ETL actually producing training labels?
+        # Row counts alone can look fine while the pipeline is silently dead,
+        # so we check recency as well as volume.
+        _log("\n  PIPELINE HEALTH")
+        checks = [
+            ("model_features labelled (trainable)",
+             "SELECT count(*) FROM model_features WHERE delay_minutes IS NOT NULL"),
+            ("model_features unlabelled",
+             "SELECT count(*) FROM model_features WHERE delay_minutes IS NULL"),
+            ("labelled rows in last 24h",
+             """SELECT count(*) FROM model_features
+                WHERE delay_minutes IS NOT NULL
+                  AND snapshot_time >= now() - interval '24 hours'"""),
+            ("actual_arrivals in last 24h",
+             """SELECT count(*) FROM actual_arrivals
+                WHERE actual_arrival_time >= now() - interval '24 hours'"""),
+            ("snapshots in last 15 min",
+             """SELECT count(*) FROM arrival_snapshots
+                WHERE snapshot_time >= now() - interval '15 minutes'"""),
+            ("user_feedback rows",
+             "SELECT count(*) FROM user_feedback"),
+        ]
+        for label, sql in checks:
+            value = scalar(sql, default=-1)
+            info[label] = value
+            _log(f"    {label:38s} {value}")
+
         # Oldest/newest snapshot — tells us how much is prunable.
         try:
             rng = conn.execute(text(
