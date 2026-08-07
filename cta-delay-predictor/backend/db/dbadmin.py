@@ -158,6 +158,10 @@ def diagnose() -> dict:
         _log(f"\n  CAN LIFT READ-ONLY FOR A TRANSACTION  {writable}")
         if writable:
             try:
+                # Drop first: the temp table can survive within a pooled
+                # connection, and a leftover would otherwise look like a
+                # write failure when writes are in fact fine.
+                conn.execute(text("DROP TABLE IF EXISTS _probe_write"))
                 conn.execute(text("CREATE TEMP TABLE _probe_write (x int)"))
                 _log("  write probe                           OK")
                 info["write_probe"] = True
@@ -285,6 +289,23 @@ def recover() -> None:
         _prune()
 
     _phase("Phase 4: prune to retention policy", run_prune)
+
+    # Phase 4b — return the pruned bytes to disk.
+    #
+    # Safe to do here specifically because pruning has already happened: VACUUM
+    # FULL's scratch requirement scales with *live* data, not total table size,
+    # and after the prune the live set is small. Running it before the prune,
+    # against a bloated table on a nearly-full disk, would be the risky order.
+    def compact_tables() -> None:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            for table in ("model_features", "arrival_snapshots", "actual_arrivals"):
+                try:
+                    conn.execute(text(f"VACUUM FULL {table}"))
+                    _log(f"    compacted {table}")
+                except Exception as exc:  # noqa: BLE001 — best effort per table
+                    _log(f"    could not compact {table}: {exc}")
+
+    _phase("Phase 4b: compact tables to return freed space", compact_tables)
 
     # Phase 5 — restore write access.
     #
