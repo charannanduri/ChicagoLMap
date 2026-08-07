@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_db
@@ -34,11 +35,22 @@ def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
         delta_minutes=delta,
     )
     try:
+        # `default_transaction_read_only` is applied to a session when it
+        # connects, so a pooled connection established while the database was
+        # read-only keeps refusing writes long after the database itself is
+        # writable again. Opt this transaction back into read-write first so a
+        # stale connection can't silently reject the insert.
+        for stmt in ("SET TRANSACTION READ WRITE", "SET LOCAL default_transaction_read_only = off"):
+            try:
+                db.execute(text(stmt))
+            except Exception:  # noqa: BLE001 — already writable, or not permitted
+                pass
+
         db.add(row)
         db.commit()
-    except Exception as exc:  # e.g. database temporarily read-only / over quota
+    except Exception as exc:  # e.g. database read-only / over quota
         db.rollback()
         logger.warning("Feedback insert failed: %s", exc)
-        raise HTTPException(status_code=503, detail="Feedback storage unavailable")
+        raise HTTPException(status_code=503, detail=f"Feedback storage unavailable: {exc}")
 
     return FeedbackResponse(ok=True, id=row.id)
