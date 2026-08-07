@@ -12,7 +12,6 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
-    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base
@@ -38,7 +37,6 @@ class ArrivalSnapshot(Base):
     is_scheduled = Column(Boolean, default=False)
     is_delayed = Column(Boolean, default=False)
     is_faulty = Column(Boolean, default=False)
-    raw_json = Column(Text)
 
     __table_args__ = (
         Index("ix_arr_snap_station_time", "station_id", "snapshot_time"),

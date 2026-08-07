@@ -70,6 +70,12 @@ def _run_migrations() -> None:
             ).first() is not None
             if needs_backfill:
                 conn.execute(text(_ROUTE_CODE_BACKFILL))
+
+            # arrival_snapshots.raw_json is a large per-row JSON blob that nothing
+            # in the training or serving pipeline reads — drop it to reclaim space
+            # (the column also stops being written by the collector).
+            if _column_exists(conn, "arrival_snapshots", "raw_json"):
+                conn.execute(text("ALTER TABLE arrival_snapshots DROP COLUMN raw_json"))
         _migrations_applied = True
     except Exception as exc:  # noqa: BLE001 — never let migrations kill collection
         logger.warning("Skipping schema migrations (%s)", exc)
