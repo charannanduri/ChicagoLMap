@@ -54,3 +54,10 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python -m backend.etl.feature_builder
+
+      - name: Prune old rows to stay within storage limits
+        if: always()   # keep the DB trim even if an earlier ETL step failed
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.prune
