@@ -26,28 +26,35 @@ TIMEOUT = 45  # generous: free-tier instances cold-start
 results: list[tuple[str, bool, bool, str]] = []  # (name, ok, required, detail)
 
 
+def _send(req: urllib.request.Request) -> tuple[int, object]:
+    """Send a request, returning (status, parsed body).
+
+    An error response is returned rather than raised, because its body usually
+    carries the reason — losing that turns a diagnosable failure into a bare
+    status code.
+    """
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            body = resp.read().decode("utf-8", "replace")
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        status = exc.code
+    try:
+        return status, json.loads(body)
+    except json.JSONDecodeError:
+        return status, body
+
+
 def _get(url: str) -> tuple[int, object]:
-    req = urllib.request.Request(url, headers={"User-Agent": "chicagolmap-smoke/1.0"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        body = resp.read().decode("utf-8", "replace")
-        try:
-            return resp.status, json.loads(body)
-        except json.JSONDecodeError:
-            return resp.status, body
+    return _send(urllib.request.Request(url, headers={"User-Agent": "chicagolmap-smoke/1.0"}))
 
 
 def _post(url: str, payload: dict) -> tuple[int, object]:
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=data, method="POST",
+    return _send(urllib.request.Request(
+        url, data=json.dumps(payload).encode(), method="POST",
         headers={"Content-Type": "application/json", "User-Agent": "chicagolmap-smoke/1.0"},
-    )
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        body = resp.read().decode("utf-8", "replace")
-        try:
-            return resp.status, json.loads(body)
-        except json.JSONDecodeError:
-            return resp.status, body
+    ))
 
 
 def check(name: str, required: bool = True):
@@ -120,16 +127,31 @@ def main() -> None:
         with_pred = [s for s in stops if s.get("predicted_arrival_time")]
         return f"run {run}: {len(stops)} stops, {len(with_pred)} with predicted times"
 
-    @check("map: POST /api/feedback (crowd accuracy)")
+    # A no-op correction (delta 0): records a row without skewing any data.
+    feedback_payload = {
+        "run_number": state.get("run_number") or "0",
+        "station_id": "40900",
+        "route": "Red",
+        "predicted_delay_minutes": 1.0,
+        "delta_minutes": 0,
+    }
+
+    # Test the predictor directly first — it owns the write. Distinguishes
+    # "route not deployed" (404) from "write rejected" (503) from a relay
+    # problem in the map app, which a 502 from the map app alone cannot.
+    @check("predictor: POST /feedback (direct)")
     def _():
-        status, data = _post(f"{MAP_URL}/api/feedback", {
-            "run_number": state.get("run_number") or "0",
-            "station_id": "40900",
-            "route": "Red",
-            "predicted_delay_minutes": 1.0,
-            "delta_minutes": 0,   # a no-op correction: records a row without skewing anything
-        })
-        assert status == 200, f"HTTP {status}"
+        status, data = _post(f"{PREDICTOR_URL}/feedback", dict(feedback_payload))
+        if status == 404:
+            raise AssertionError("route missing — predictor service is running an older build")
+        assert status == 200, f"HTTP {status}: {data}"
+        assert data.get("ok") is True, f"response={data}"
+        return f"recorded id={data.get('id')}"
+
+    @check("map: POST /api/feedback (relayed)")
+    def _():
+        status, data = _post(f"{MAP_URL}/api/feedback", dict(feedback_payload))
+        assert status == 200, f"HTTP {status}: {data}"
         assert data.get("ok") is True, f"response={data}"
         return f"recorded id={data.get('id')}"
 
