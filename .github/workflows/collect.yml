@@ -34,6 +34,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r cta-delay-predictor/requirements-collector.txt
 
+      # Prune BEFORE collecting: free space first so the inserts that follow
+      # have room, rather than discovering the database is full mid-run.
+      - name: Prune old rows to stay within storage limits
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.etl.prune
+
       - name: Poll CTA API every 5 minutes for ~50 minutes
         working-directory: cta-delay-predictor
         env:

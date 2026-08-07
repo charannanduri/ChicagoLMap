@@ -1,0 +1,54 @@
+name: Database Maintenance
+
+# Manual database diagnostics and emergency space recovery.
+# "diagnose" is read-only and always safe to run.
+# "recover" reclaims disk space so the database can leave read-only mode.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'What to run'
+        type: choice
+        options:
+          - diagnose
+          - recover
+        default: diagnose
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: db-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cta-delay-predictor/requirements-collector.txt
+
+      - name: Install dependencies
+        run: pip install -r cta-delay-predictor/requirements-collector.txt
+
+      - name: Diagnose
+        if: inputs.action == 'diagnose'
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.db.dbadmin diagnose
+
+      - name: Recover disk space
+        if: inputs.action == 'recover'
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -m backend.db.dbadmin recover --yes
