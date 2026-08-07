@@ -200,23 +200,35 @@ def recover() -> None:
 
     _phase("Phase 1: TRUNCATE train_positions (unused)", truncate_positions)
 
-    # Phase 2 — drop the raw_json blob column (nothing reads it).
-    # Metadata-only, so it doesn't reclaim space by itself; the table rewrite in
-    # phase 4 is what actually returns those bytes.
-    def drop_raw_json() -> None:
+    # Phase 2 — reclaim arrival_snapshots, the dominant consumer.
+    #
+    # DELETE only marks rows dead; the bytes come back on a rewrite. VACUUM FULL
+    # does that rewrite but needs scratch space about the size of the live data —
+    # exactly what a full disk doesn't have. TRUNCATE, by contrast, unlinks the
+    # files outright: instant, and it needs no scratch space at all.
+    #
+    # So: if nothing in the table is still inside the retention window, every row
+    # is slated for deletion anyway and TRUNCATE is the equivalent — and far
+    # safer on a full disk. Otherwise fall back to batched DELETE + VACUUM FULL.
+    def reclaim_snapshots() -> None:
         with engine.begin() as conn:
-            if not _try_make_writable(conn):
-                raise RuntimeError("could not obtain write access")
-            conn.execute(text(
-                "ALTER TABLE arrival_snapshots DROP COLUMN IF EXISTS raw_json"
-            ))
+            keep = conn.execute(text(
+                f"""
+                SELECT count(*) FROM arrival_snapshots
+                WHERE snapshot_time >= now() - interval '{SNAPSHOT_RETENTION_DAYS} days'
+                """
+            )).scalar() or 0
+        _log(f"    rows still within {SNAPSHOT_RETENTION_DAYS}-day retention: {keep:,}")
 
-    _phase("Phase 2: DROP arrival_snapshots.raw_json", drop_raw_json)
+        if keep == 0:
+            _log("    nothing within retention — TRUNCATE reclaims it all at once")
+            with engine.begin() as conn:
+                if not _try_make_writable(conn):
+                    raise RuntimeError("could not obtain write access")
+                conn.execute(text("TRUNCATE TABLE arrival_snapshots"))
+            return
 
-    # Phase 3 — batched delete of snapshots past the retention window.
-    # Batched so no single transaction has to hold a huge amount of WAL on a
-    # disk that is already full.
-    def delete_old_snapshots() -> None:
+        # Batched so no single transaction holds a large amount of WAL.
         total = 0
         while True:
             with engine.begin() as conn:
@@ -238,15 +250,8 @@ def recover() -> None:
                 _log(f"    deleted {total:,} rows so far…")
             if deleted < DELETE_BATCH:
                 break
-        _log(f"    deleted {total:,} old snapshot rows")
+        _log(f"    deleted {total:,} old snapshot rows; rewriting to reclaim space")
 
-    _phase("Phase 3: DELETE snapshots older than retention", delete_old_snapshots)
-
-    # Phase 4 — rewrite the table to actually return the freed bytes to disk.
-    # VACUUM FULL needs its own connection outside a transaction. It also needs
-    # scratch space roughly the size of the live data, which phases 1-3 should
-    # have made available.
-    def vacuum_snapshots() -> None:
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             try:
                 conn.execute(text("SET default_transaction_read_only = off"))
@@ -254,17 +259,19 @@ def recover() -> None:
                 pass
             conn.execute(text("VACUUM FULL arrival_snapshots"))
 
-    _phase("Phase 4: VACUUM FULL arrival_snapshots", vacuum_snapshots)
+    _phase("Phase 2: reclaim arrival_snapshots", reclaim_snapshots)
 
-    def vacuum_positions() -> None:
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            try:
-                conn.execute(text("SET default_transaction_read_only = off"))
-            except Exception:  # noqa: BLE001
-                pass
-            conn.execute(text("VACUUM FULL train_positions"))
+    # Phase 3 — drop the dead raw_json blob column so it can never refill.
+    # Cheap now that the table has been emptied/shrunk.
+    def drop_raw_json() -> None:
+        with engine.begin() as conn:
+            if not _try_make_writable(conn):
+                raise RuntimeError("could not obtain write access")
+            conn.execute(text(
+                "ALTER TABLE arrival_snapshots DROP COLUMN IF EXISTS raw_json"
+            ))
 
-    _phase("Phase 5: VACUUM FULL train_positions", vacuum_positions)
+    _phase("Phase 3: DROP arrival_snapshots.raw_json", drop_raw_json)
 
     _log("\nRecovery finished — re-running diagnosis:\n")
     diagnose()
