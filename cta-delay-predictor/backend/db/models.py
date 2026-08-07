@@ -244,3 +244,26 @@ class ModelFeature(Base):
         Index("ix_mf_station_time", "station_id", "snapshot_time"),
         Index("ix_mf_route_time", "route", "snapshot_time"),
     )
+
+
+class UserFeedback(Base):
+    """
+    Crowd-sourced arrival accuracy: a rider reports how far off our predicted
+    arrival was (delta_minutes; + = the train arrived later than predicted,
+    - = earlier). Kept separate from the inferred actual_arrivals so noisy
+    input can be validated before it ever influences training.
+    """
+
+    __tablename__ = "user_feedback"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    run_number = Column(String(10))
+    station_id = Column(String(20))
+    route = Column(String(10))
+    predicted_delay_minutes = Column(Numeric(8, 2))   # our model's delay estimate at report time
+    delta_minutes = Column(Numeric(8, 2), nullable=False)  # rider's correction vs our estimate
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_feedback_station_time", "station_id", "created_at"),
+    )

@@ -136,9 +136,13 @@ struct BoardTrainView: View {
             GlassGroup(spacing: 12) {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(arrivals.directions) { group in
-                        DirectionSection(group: group, onBoard: { arrival, line in
-                            onBoard(arrival, line, chosen?.name ?? arrivals.stationName ?? "Station")
-                        })
+                        DirectionSection(
+                            group: group,
+                            onBoard: { arrival, line in
+                                onBoard(arrival, line, chosen?.name ?? arrivals.stationName ?? "Station")
+                            },
+                            stationId: chosen?.id ?? arrivals.mapid
+                        )
                     }
                 }
             }

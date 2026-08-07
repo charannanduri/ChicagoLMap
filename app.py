@@ -67,6 +67,11 @@ def _keep_predictor_warm() -> None:
 if DELAY_PREDICTOR_URL:
     threading.Thread(target=_keep_predictor_warm, daemon=True).start()
 
+# CTA Customer Alerts API (keyless). Cached briefly so we don't hammer it.
+_ALERTS_URL = "https://www.transitchicago.com/api/1.0/alerts.aspx"
+_alerts_cache: dict = {"at": None, "data": []}
+_ALERTS_TTL_SECONDS = 90
+
 # Deployment environment — injected by Render, empty on localhost.
 SITE_ENV = os.environ.get("SITE_ENV", "")        # "production" | ""
 
@@ -526,6 +531,122 @@ def api_run_follow(run_number):
         stop["predicted_arrival_time"] = _shift_iso(stop.get("arrival_time"), delay)
 
     return jsonify(data)
+
+
+_ROUTE_NAME_TO_KEY = {
+    "red": "red", "blue": "blue", "brown": "brn", "brn": "brn",
+    "green": "g", "g": "g", "orange": "o", "org": "o",
+    "purple": "p", "purple express": "p", "p": "p",
+    "pink": "pnk", "pnk": "pnk", "yellow": "y", "y": "y",
+}
+
+
+def _fetch_alerts() -> list[dict]:
+    """Fetch active CTA train alerts, simplified. Cached for _ALERTS_TTL_SECONDS."""
+    now = datetime.now(timezone.utc)
+    cached_at = _alerts_cache["at"]
+    if cached_at and (now - cached_at).total_seconds() < _ALERTS_TTL_SECONDS:
+        return _alerts_cache["data"]
+
+    try:
+        resp = _requests.get(
+            _ALERTS_URL,
+            params={"outputType": "JSON", "activeonly": "true"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        logging.warning("CTA alerts fetch failed: %s", exc)
+        # Serve stale cache if we have it, else empty.
+        return _alerts_cache["data"] or []
+
+    raw_alerts = payload.get("CTAAlerts", {}).get("Alert", [])
+    if isinstance(raw_alerts, dict):
+        raw_alerts = [raw_alerts]
+
+    def _cdata(v):
+        if isinstance(v, dict):
+            return v.get("#cdata-section") or v.get("#text") or ""
+        return v or ""
+
+    simplified: list[dict] = []
+    for a in raw_alerts:
+        # Which train lines does this alert touch?
+        services = (a.get("ImpactedService") or {}).get("Service") or []
+        if isinstance(services, dict):
+            services = [services]
+        route_keys: list[str] = []
+        for svc in services:
+            if str(svc.get("ServiceType")) != "T":   # T = train
+                continue
+            name = (svc.get("ServiceName") or svc.get("ServiceId") or "").strip()
+            key = _ROUTE_NAME_TO_KEY.get(name.lower())
+            if key and key not in route_keys:
+                route_keys.append(key)
+
+        # Keep train alerts (route-scoped) and system-wide train notices.
+        is_train = any(str(s.get("ServiceType")) == "T" for s in services) if services else False
+        if not is_train and route_keys == []:
+            continue
+
+        simplified.append({
+            "id": str(a.get("AlertId") or ""),
+            "headline": _cdata(a.get("Headline")).strip(),
+            "description": _cdata(a.get("ShortDescription")).strip(),
+            "impact": (a.get("Impact") or "").strip(),
+            "severity": _to_int(a.get("SeverityScore")) or 0,
+            "routes": route_keys,
+            "url": _cdata(a.get("AlertURL")).strip(),
+        })
+
+    # Most severe first.
+    simplified.sort(key=lambda x: x["severity"], reverse=True)
+    _alerts_cache["at"] = now
+    _alerts_cache["data"] = simplified
+    return simplified
+
+
+def _to_int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.route('/api/alerts', methods=['GET'])
+def api_alerts():
+    """Active CTA train service alerts (closures, delays, reroutes)."""
+    route = (request.args.get("route") or "").lower() or None
+    alerts = _fetch_alerts()
+    if route:
+        alerts = [a for a in alerts if not a["routes"] or route in a["routes"]]
+    return jsonify({"alerts": alerts, "as_of": datetime.now(timezone.utc).isoformat()})
+
+
+@app.route('/api/feedback', methods=['POST'])
+def api_feedback():
+    """
+    Relay a rider's arrival-accuracy correction to the predictor service, which
+    owns the database. Body: {run_number, station_id, route,
+    predicted_delay_minutes, delta_minutes}.
+    """
+    if not DELAY_PREDICTOR_URL:
+        abort(503, description="Feedback service not configured.")
+    body = request.get_json(silent=True) or {}
+    if "delta_minutes" not in body:
+        abort(400, description="delta_minutes is required.")
+    try:
+        resp = _requests.post(
+            f"{DELAY_PREDICTOR_URL}/feedback",
+            json=body,
+            timeout=(3.05, 8),
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except Exception as exc:
+        logging.warning("Feedback relay failed: %s", exc)
+        abort(502, description="Could not record feedback right now.")
 
 
 @app.route('/api/station/<int:mapid>/arrivals', methods=['GET'])

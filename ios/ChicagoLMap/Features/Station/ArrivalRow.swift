@@ -17,6 +17,8 @@ struct DirectionSection: View {
     let group: DirectionGroup
     /// When set, each row shows a "Board" button that starts trip tracking.
     var onBoard: ((Arrival, CTALine?) -> Void)? = nil
+    /// Station these arrivals belong to — passed to each row for feedback.
+    var stationId: Int? = nil
 
     private var visibleArrivals: [Arrival] {
         Array(group.trains.prefix(3))
@@ -37,7 +39,8 @@ struct DirectionSection: View {
                         ArrivalRow(
                             arrival: arrival,
                             line: group.line,
-                            onBoard: onBoard.map { cb in { cb(arrival, group.line) } }
+                            onBoard: onBoard.map { cb in { cb(arrival, group.line) } },
+                            stationId: stationId
                         )
                         if index < visibleArrivals.count - 1 {
                             Divider()
@@ -91,8 +94,16 @@ struct ArrivalRow: View {
     let arrival: Arrival
     let line: CTALine?
     var onBoard: (() -> Void)? = nil
+    /// Station this arrival belongs to — needed to attribute accuracy feedback.
+    var stationId: Int? = nil
 
     @AppStorage(timeFormatDefaultsKey) private var timeFormat: TimeFormat = .relative
+
+    @State private var fbExpanded = false
+    @State private var fbDelta = 0
+    @State private var fbState: FeedbackState = .idle
+
+    private enum FeedbackState { case idle, sending, done, failed }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -103,6 +114,9 @@ struct ArrivalRow: View {
                     Text(status)
                         .font(.caption2)
                         .foregroundStyle(Theme.secondaryText)
+                }
+                if arrival.predictedMinutes != nil {
+                    feedbackControl
                 }
             }
 
@@ -142,6 +156,94 @@ struct ArrivalRow: View {
         .buttonStyle(.plain)
         .liquidGlassCapsule(interactive: true)
         .accessibilityLabel("Board this train")
+    }
+
+    // MARK: Accuracy feedback
+
+    @ViewBuilder
+    private var feedbackControl: some View {
+        switch fbState {
+        case .done:
+            Label("Thanks — logged", systemImage: "checkmark.circle.fill")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.green)
+        default:
+            if fbExpanded {
+                HStack(spacing: 8) {
+                    Text("Off by")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.secondaryText)
+                    stepButton("minus.circle.fill") { fbDelta = max(-60, fbDelta - 1) }
+                    Text(deltaLabel)
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .frame(minWidth: 52)
+                    stepButton("plus.circle.fill") { fbDelta = min(60, fbDelta + 1) }
+                    Button(action: submitFeedback) {
+                        Text(fbState == .sending ? "…" : "Send")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(line?.color ?? .white)
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 28)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .liquidGlassCapsule(interactive: true)
+                    .disabled(fbState == .sending)
+                    if fbState == .failed {
+                        Text("Couldn't send")
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                    }
+                }
+            } else {
+                Button {
+                    fbExpanded = true
+                } label: {
+                    Label("Was our ETA right?", systemImage: "hand.thumbsup")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Rate arrival accuracy")
+            }
+        }
+    }
+
+    /// How far off our prediction was, as the rider reports it.
+    private var deltaLabel: String {
+        if fbDelta == 0 { return "spot on" }
+        let sign = fbDelta > 0 ? "+" : ""
+        return "\(sign)\(fbDelta) min"
+    }
+
+    private func stepButton(_ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.body)
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func submitFeedback() {
+        Task { @MainActor in
+            fbState = .sending
+            do {
+                try await APIClient.shared.submitFeedback(
+                    runNumber: arrival.runNumber,
+                    stationId: stationId,
+                    route: line?.arrivalsKey,
+                    predictedDelayMinutes: arrival.delayMinutes,
+                    deltaMinutes: Double(fbDelta)
+                )
+                fbState = .done
+            } catch {
+                fbState = .failed
+            }
+        }
     }
 
     private var destinationLine: some View {

@@ -107,6 +107,31 @@ struct APIClient: Sendable {
         return try await fetch(url)
     }
 
+    /// GET /api/alerts — active CTA train service alerts.
+    func alerts() async throws -> [ServiceAlert] {
+        let url = baseURL.appending(path: "api/alerts")
+        let response: AlertsResponse = try await fetch(url)
+        return response.alerts
+    }
+
+    /// POST /api/feedback — a rider's arrival-accuracy correction.
+    /// delta is minutes the train was later (+) or earlier (-) than we predicted.
+    func submitFeedback(
+        runNumber: String?,
+        stationId: Int?,
+        route: String?,
+        predictedDelayMinutes: Double?,
+        deltaMinutes: Double
+    ) async throws {
+        let url = baseURL.appending(path: "api/feedback")
+        var body: [String: Any] = ["delta_minutes": deltaMinutes]
+        if let runNumber { body["run_number"] = runNumber }
+        if let stationId { body["station_id"] = String(stationId) }
+        if let route { body["route"] = route }
+        if let predictedDelayMinutes { body["predicted_delay_minutes"] = predictedDelayMinutes }
+        try await postJSON(url, body: body)
+    }
+
     // MARK: Private helpers
 
     private func stops(for line: CTALine) async throws -> [StopRecord] {
@@ -136,6 +161,18 @@ struct APIClient: Sendable {
             throw URLError(.badServerResponse)
         }
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func postJSON(_ url: URL, body: [String: Any]) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (_, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
     }
 }
 

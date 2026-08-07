@@ -17,13 +17,16 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     timeFormatSection
+                    AlertsSection()
+                    LegendSection()
+                    HowPredictionsSection()
                     aboutSection
                 }
                 .padding(20)
             }
             .scrollIndicators(.hidden)
             .background(Theme.background)
-            .navigationTitle("Settings")
+            .navigationTitle("Info & Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

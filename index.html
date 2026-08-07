@@ -387,6 +387,142 @@
         .arr-loading { text-align: center; padding: 16px; color: rgba(255,255,255,0.45); font-size: 13px; }
         .arr-empty   { text-align: center; padding: 12px; color: rgba(255,255,255,0.35); font-size: 12px; }
 
+        /* ── Accuracy feedback control (per arrival row) ───────────────────── */
+        .arr-fb {
+            flex-basis: 100%; width: 100%;
+            display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+            margin-top: 6px; padding-top: 6px;
+            border-top: 1px solid rgba(255,255,255,0.07);
+        }
+        .arr-fb-label { font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.4); }
+        .arr-fb-btn {
+            width: 22px; height: 22px; border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.16);
+            background: rgba(255,255,255,0.06);
+            color: rgba(255,255,255,0.8); font-size: 14px; font-weight: 700;
+            line-height: 1; cursor: pointer; font-family: inherit;
+            display: inline-flex; align-items: center; justify-content: center;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .arr-fb-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.28); }
+        .arr-fb-btn:active { transform: scale(0.9); }
+        .arr-fb-val {
+            min-width: 40px; text-align: center;
+            font-size: 12px; font-weight: 700; color: #fff;
+        }
+        .arr-fb-val .arr-fb-unit { font-size: 9px; font-weight: 500; color: rgba(255,255,255,0.45); margin-left: 2px; }
+        .arr-fb-send {
+            padding: 3px 10px; border-radius: 7px;
+            border: 1px solid rgba(255,255,255,0.18);
+            background: rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.82); font-size: 11px; font-weight: 600;
+            cursor: pointer; font-family: inherit;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .arr-fb-send:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.3); }
+        .arr-fb-send:active { transform: scale(0.95); }
+        .arr-fb-done { font-size: 11px; font-weight: 600; color: #30d158; }
+        .arr-fb-err  { font-size: 11px; font-weight: 600; color: #ff453a; margin-left: 4px; }
+
+        /* ── Info button (top-right, left of the line selector) ────────────── */
+        #info-btn {
+            position: absolute; top: 24px; right: 216px; z-index: 1001;
+            width: 34px; height: 34px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(255,255,255,0.10);
+            backdrop-filter: blur(28px) saturate(200%) brightness(1.08);
+            -webkit-backdrop-filter: blur(28px) saturate(200%) brightness(1.08);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.42), 0 2px 6px rgba(0,0,0,0.22),
+                        inset 0 1px 0 rgba(255,255,255,0.38), inset 0 -1px 0 rgba(0,0,0,0.14);
+            font-size: 17px; color: rgba(255,255,255,0.9);
+            cursor: pointer; transition: transform 0.18s ease, background 0.18s ease;
+        }
+        #info-btn:hover  { background: rgba(255,255,255,0.18); }
+        #info-btn:active { transform: scale(0.92); }
+
+        /* ── Info modal ────────────────────────────────────────────────────── */
+        #info-modal {
+            position: fixed; inset: 0; z-index: 3000;
+            display: none; align-items: center; justify-content: center;
+            padding: 20px;
+            background: rgba(4,6,12,0.62);
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+        }
+        #info-modal.open { display: flex; }
+        .modal-card {
+            position: relative;
+            width: 100%; max-width: 520px; max-height: 85vh;
+            overflow-y: auto; -webkit-overflow-scrolling: touch;
+            background: rgba(10,13,22,0.9);
+            backdrop-filter: blur(36px) saturate(200%) brightness(1.04);
+            -webkit-backdrop-filter: blur(36px) saturate(200%) brightness(1.04);
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 22px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.24);
+            padding: 22px 22px 26px;
+        }
+        .modal-close {
+            position: absolute; top: 14px; right: 14px;
+            width: 30px; height: 30px; border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(255,255,255,0.06);
+            color: rgba(255,255,255,0.6); font-size: 15px;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+        .modal-close:hover { background: rgba(255,255,255,0.14); color: #fff; }
+        .modal-title { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 4px; letter-spacing: -0.02em; }
+        .modal-sub   { font-size: 12px; color: rgba(255,255,255,0.4); margin-bottom: 16px; }
+        .modal-section { margin-top: 20px; }
+        .modal-section:first-of-type { margin-top: 8px; }
+        .modal-section-title {
+            font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+            color: rgba(255,255,255,0.42); margin-bottom: 10px;
+            padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .modal-section p {
+            font-size: 12.5px; line-height: 1.6; color: rgba(255,255,255,0.72);
+            margin-bottom: 8px;
+        }
+        .modal-section p:last-child { margin-bottom: 0; }
+
+        /* Legend rows */
+        .legend-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .legend-row:last-child { border-bottom: none; }
+        .legend-sym {
+            flex-shrink: 0; width: 78px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .legend-desc { font-size: 12px; line-height: 1.45; color: rgba(255,255,255,0.72); }
+        .legend-warn { font-size: 17px; color: #ff453a; }
+        .legend-now  { font-size: 12px; font-weight: 700; color: #30d158; }
+
+        /* Alerts */
+        .alert-item {
+            padding: 11px 12px; border-radius: 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            margin-bottom: 8px;
+        }
+        .alert-item:last-child { margin-bottom: 0; }
+        .alert-headline { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+        .alert-impact {
+            display: inline-block; font-size: 10px; font-weight: 700;
+            letter-spacing: 0.04em; padding: 2px 8px; border-radius: 20px;
+            background: rgba(255,214,10,0.18); color: #ffd60a; margin-bottom: 6px;
+        }
+        .alert-desc { font-size: 12px; line-height: 1.5; color: rgba(255,255,255,0.62); }
+        .alert-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+        .alert-chip {
+            font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 20px; color: #fff;
+        }
+        .alert-chip.systemwide { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.85); }
+        .alerts-msg { font-size: 12px; color: rgba(255,255,255,0.4); padding: 4px 0; }
+
         /* ── Leaflet popup ─────────────────────────────────────────────────── */
         .leaflet-popup-content-wrapper {
             background: rgba(12,15,24,0.78) !important;
@@ -486,6 +622,9 @@
             #station-panel { max-height: 56dvh; }
             #station-list  { padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 16px)); }
 
+            /* Info button — moves left of the mobile menu button */
+            #info-btn { top: 22px; right: 72px; width: 40px; height: 40px; }
+
             /* Popup */
             .leaflet-popup-content-wrapper { max-width: 90vw !important; }
             .leaflet-control-zoom { display: none; }
@@ -537,6 +676,77 @@
     <div class="live-dot" id="live-dot"></div>
     <span class="status-text" id="status-text">Connecting…</span>
     <span class="status-mode" id="status-mode" style="display:none"></span>
+</div>
+
+<!-- Info button — top right, left of the line selector -->
+<button id="info-btn" onclick="openInfoModal()" aria-label="About this map & service alerts">ⓘ</button>
+
+<!-- Info modal -->
+<div id="info-modal" onclick="if(event.target===this)closeInfoModal()">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="About this map">
+        <button class="modal-close" onclick="closeInfoModal()" aria-label="Close">✕</button>
+        <div class="modal-title">About this map</div>
+        <div class="modal-sub">Live Chicago 'L' arrivals, with ML-corrected predictions.</div>
+
+        <!-- Section A — legend -->
+        <div class="modal-section">
+            <div class="modal-section-title">What the symbols mean</div>
+            <div class="legend-row">
+                <div class="legend-sym"><span class="legend-warn">⚠</span></div>
+                <div class="legend-desc">The CTA has flagged this train as delayed.</div>
+            </div>
+            <div class="legend-row">
+                <div class="legend-sym">
+                    <div class="arr-sched-pill">
+                        <span class="arr-pill-label">Scheduled</span>
+                        <span class="arr-pill-value">6 min</span>
+                    </div>
+                </div>
+                <div class="legend-desc">The CTA Train Tracker's own arrival estimate.</div>
+            </div>
+            <div class="legend-row">
+                <div class="legend-sym">
+                    <div class="arr-ml-pill">
+                        <span class="arr-pill-label">Predicted</span>
+                        <span class="arr-pill-value">~8 min</span>
+                    </div>
+                </div>
+                <div class="legend-desc">Our machine-learning estimate of the real arrival time.</div>
+            </div>
+            <div class="legend-row">
+                <div class="legend-sym"><span class="legend-now">Now</span></div>
+                <div class="legend-desc">The train is arriving or approaching the platform.</div>
+            </div>
+            <div class="legend-row">
+                <div class="legend-sym">
+                    <span class="live-dot" style="position:relative;"></span>
+                    <span class="live-dot" style="position:relative;background:#ff453a;animation:none;box-shadow:0 0 5px #ff453a;margin-left:6px;"></span>
+                </div>
+                <div class="legend-desc">Pulsing green dot: live data is updating. Red dot: connection lost.</div>
+            </div>
+            <div class="legend-row">
+                <div class="legend-sym" style="gap:4px;">
+                    <span class="arr-route-chip" style="background:#c60c30;margin:0;">Red</span>
+                    <span class="arr-route-chip" style="background:#00a1de;margin:0;">Blue</span>
+                </div>
+                <div class="legend-desc">Colored line chips: which 'L' line the train runs on.</div>
+            </div>
+        </div>
+
+        <!-- Section B — how predictions work -->
+        <div class="modal-section">
+            <div class="modal-section-title">How our predictions work</div>
+            <p>The CTA's own arrival estimate — the "Scheduled" time — comes straight from the CTA Train Tracker. Our "Predicted" time layers a machine-learning model on top of it.</p>
+            <p>The model (gradient-boosted trees) is trained on months of historical arrivals we collect every few minutes. For each train approaching a station it learns how the CTA's estimate typically drifts, using features like the line, station, direction, time of day, day of week, whether it's rush hour, how quickly the ETA has been changing, and the gap to the trains ahead and behind. From those it predicts how many minutes early or late the train will really be versus the CTA estimate, and we show you the corrected time.</p>
+            <p>It retrains every week on fresh data, so it keeps adapting. Predictions are strongest on the Red and Blue lines (where we have the most data) and improve on the other lines as we collect more. Your accuracy feedback (the +/− control on each train) feeds back into this.</p>
+        </div>
+
+        <!-- Section C — service alerts -->
+        <div class="modal-section">
+            <div class="modal-section-title">Service alerts</div>
+            <div id="alerts-body"><div class="alerts-msg">Loading alerts…</div></div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -695,7 +905,7 @@ function mlStatusClass(s) {
     return 'on-time';
 }
 
-function renderArrivalsPopup(data) {
+function renderArrivalsPopup(data, mapid) {
     const dirs = data.directions || [];
     if (!dirs.length)
         return `<div class="arr-station">${data.station_name || 'Station'}</div><div class="arr-empty">No arrivals found</div>`;
@@ -720,6 +930,7 @@ function renderArrivalsPopup(data) {
 
             // ── ML prediction pill (rainbow spinning border) ──────────────
             let mlPill = '';
+            let fbCtrl = '';
             if (t.predictor_active && t.delay_minutes != null) {
                 const mlMin = Math.round((t.eta_minutes || 0) + (t.delay_minutes || 0));
                 const mlVal = t.is_approaching ? 'Now' : `~${Math.max(0, mlMin)} min`;
@@ -727,18 +938,77 @@ function renderArrivalsPopup(data) {
                     <span class="arr-pill-label">Predicted</span>
                     <span class="arr-pill-value">${mlVal}</span>
                 </div>`;
+
+                // ── Accuracy feedback control ─────────────────────────────
+                fbCtrl = `<div class="arr-fb"
+                        data-run="${t.run_number != null ? t.run_number : ''}"
+                        data-mapid="${mapid != null ? mapid : ''}"
+                        data-route="${dir.route}"
+                        data-pred="${t.delay_minutes}"
+                        data-val="0">
+                    <span class="arr-fb-label">Off by?</span>
+                    <button class="arr-fb-btn" type="button" onclick="ctaFeedbackStep(this,-1)">−</button>
+                    <span class="arr-fb-val">0<span class="arr-fb-unit">min</span></span>
+                    <button class="arr-fb-btn" type="button" onclick="ctaFeedbackStep(this,1)">+</button>
+                    <button class="arr-fb-send" type="button" onclick="ctaFeedbackSend(this)">Send</button>
+                </div>`;
             }
 
             html += `<div class="arr-row">
                 <span class="arr-dest">→ ${t.destination || '—'}</span>
                 ${ctaPill}
                 ${mlPill}
+                ${fbCtrl}
             </div>`;
         }
         html += `</div>`;
     }
     return html;
 }
+
+// ── Accuracy feedback handlers (popup HTML is a string → global fns) ──────────
+function _fmtFbVal(v) { return (v > 0 ? '+' + v : '' + v) + '<span class="arr-fb-unit">min</span>'; }
+
+window.ctaFeedbackStep = function (btn, dir) {
+    const box = btn.closest('.arr-fb');
+    if (!box) return;
+    let v = parseInt(box.dataset.val || '0', 10) + dir;
+    if (v > 60) v = 60;
+    if (v < -60) v = -60;
+    box.dataset.val = v;
+    const valEl = box.querySelector('.arr-fb-val');
+    if (valEl) valEl.innerHTML = _fmtFbVal(v);
+};
+
+window.ctaFeedbackSend = function (btn) {
+    const box = btn.closest('.arr-fb');
+    if (!box) return;
+    // Remove any prior error message
+    const oldErr = box.querySelector('.arr-fb-err');
+    if (oldErr) oldErr.remove();
+    btn.disabled = true;
+    const payload = {
+        run_number: box.dataset.run !== '' ? box.dataset.run : null,
+        station_id: box.dataset.mapid !== '' ? box.dataset.mapid : null,
+        route: box.dataset.route || null,
+        predicted_delay_minutes: box.dataset.pred !== '' ? Number(box.dataset.pred) : null,
+        delta_minutes: parseInt(box.dataset.val || '0', 10),
+    };
+    fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    })
+        .then(r => { if (!r.ok) throw new Error('bad status'); })
+        .then(() => { box.innerHTML = '<span class="arr-fb-done">Thanks — logged ✓</span>'; })
+        .catch(() => {
+            btn.disabled = false;
+            const err = document.createElement('span');
+            err.className = 'arr-fb-err';
+            err.textContent = "Couldn't send";
+            box.appendChild(err);
+        });
+};
 
 async function fetchAndShowArrivals(marker, mapid, stationName) {
     marker.bindPopup(
@@ -747,7 +1017,7 @@ async function fetchAndShowArrivals(marker, mapid, stationName) {
     ).openPopup();
     try {
         const data = await fetch(`/api/station/${mapid}/arrivals?n=12`).then(r => r.json());
-        marker.setPopupContent(renderArrivalsPopup(data));
+        marker.setPopupContent(renderArrivalsPopup(data, mapid));
     } catch {
         marker.setPopupContent(
             `<div class="arr-station">${stationName}</div><div class="arr-empty">Failed to load arrivals</div>`
@@ -1048,6 +1318,75 @@ routeButtons.forEach(btn => {
         currentIntervalId = setInterval(() => refreshTrains(routes), UPDATE_MS);
     });
 });
+
+// ── Info modal + service alerts ──────────────────────────────────────────────
+const _infoModalEl = document.getElementById('info-modal');
+const _alertsBodyEl = document.getElementById('alerts-body');
+
+// Map alert route keys (lowercase, as returned by /api/alerts) → ROUTE_COLORS_MAP CTA name
+const ALERT_ROUTE_TO_CTA = {
+    red: 'Red', blue: 'Blue', g: 'G', brn: 'Brn', o: 'Org', p: 'P', pnk: 'Pink', y: 'Y',
+};
+
+function _escHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function openInfoModal() {
+    _infoModalEl.classList.add('open');
+    loadInfoAlerts();
+}
+
+function closeInfoModal() {
+    _infoModalEl.classList.remove('open');
+}
+
+// Close modal on Escape
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && _infoModalEl.classList.contains('open')) closeInfoModal();
+});
+
+function renderAlert(a) {
+    const routes = Array.isArray(a.routes) ? a.routes : [];
+    let chips;
+    if (!routes.length) {
+        chips = '<span class="alert-chip systemwide">System-wide</span>';
+    } else {
+        chips = routes.map(k => {
+            const cta = ALERT_ROUTE_TO_CTA[k];
+            const color = (cta && ROUTE_COLORS_MAP[cta]) || ROUTE_COLORS[k] || '#888';
+            const label = ROUTE_NAMES[k] || String(k).toUpperCase();
+            return `<span class="alert-chip" style="background:${color}">${_escHtml(label)}</span>`;
+        }).join('');
+    }
+    const impact = a.impact ? `<div class="alert-impact">${_escHtml(a.impact)}</div>` : '';
+    const desc = a.description ? `<div class="alert-desc">${_escHtml(a.description)}</div>` : '';
+    return `<div class="alert-item">
+        <div class="alert-headline">${_escHtml(a.headline || 'Service alert')}</div>
+        ${impact}
+        ${desc}
+        <div class="alert-chips">${chips}</div>
+    </div>`;
+}
+
+async function loadInfoAlerts() {
+    _alertsBodyEl.innerHTML = '<div class="alerts-msg">Loading alerts…</div>';
+    try {
+        const res = await fetch('/api/alerts');
+        if (!res.ok) throw new Error('bad status');
+        const data = await res.json();
+        const alerts = (data && Array.isArray(data.alerts)) ? data.alerts : [];
+        if (!alerts.length) {
+            _alertsBodyEl.innerHTML = '<div class="alerts-msg">No active service alerts.</div>';
+            return;
+        }
+        _alertsBodyEl.innerHTML = alerts.map(renderAlert).join('');
+    } catch (e) {
+        _alertsBodyEl.innerHTML = '<div class="alerts-msg">Couldn\'t load alerts.</div>';
+    }
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 setActiveButton(currentRoute);

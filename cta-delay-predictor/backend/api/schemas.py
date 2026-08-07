@@ -56,3 +56,18 @@ class HealthResponse(BaseModel):
     model_ready: bool
     db_ok: bool
     snapshot_count: int
+
+
+class FeedbackRequest(BaseModel):
+    run_number: Optional[str] = None
+    station_id: Optional[str] = None
+    route: Optional[str] = None
+    predicted_delay_minutes: Optional[float] = None
+    # Rider's correction vs our prediction, in minutes:
+    # + = train arrived later than we predicted, - = earlier.
+    delta_minutes: float
+
+
+class FeedbackResponse(BaseModel):
+    ok: bool
+    id: Optional[int] = None
