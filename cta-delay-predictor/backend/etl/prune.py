@@ -27,12 +27,32 @@ from backend.db.session import engine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# (table, time column, days to keep)
-_RETENTION: list[tuple[str, str, int]] = [
-    ("arrival_snapshots", "snapshot_time", 7),
-    ("train_positions", "snapshot_time", 7),
-    ("model_features", "snapshot_time", 120),
-    ("actual_arrivals", "actual_arrival_time", 180),
+# (label, table, time column, days to keep, extra predicate)
+#
+# Sized for a small database. The two levers that matter:
+#
+#  * arrival_snapshots is raw input to the ETL, which only ever looks back two
+#    hours. At a true 5-minute cadence across every station this table grows by
+#    tens of MB a day, so it gets a short window.
+#  * model_features rows are only training data once they carry a delay label.
+#    In practice ~96% never get labelled (they were live prediction candidates),
+#    and training explicitly filters on `delay_minutes IS NOT NULL`. So unlabelled
+#    rows expire quickly while labelled ones — the actual training set — are kept
+#    for a year.
+_RETENTION: list[tuple[str, str, str, int, str]] = [
+    ("arrival_snapshots", "arrival_snapshots", "snapshot_time", 2, ""),
+    ("train_positions", "train_positions", "snapshot_time", 1, ""),
+    (
+        "model_features (unlabelled)",
+        "model_features", "snapshot_time", 3,
+        "AND delay_minutes IS NULL",
+    ),
+    (
+        "model_features (labelled)",
+        "model_features", "snapshot_time", 365,
+        "AND delay_minutes IS NOT NULL",
+    ),
+    ("actual_arrivals", "actual_arrivals", "actual_arrival_time", 365, ""),
 ]
 
 
@@ -57,20 +77,20 @@ def prune() -> int:
     """Delete rows older than each table's retention window. Returns rows deleted."""
     now = datetime.now(timezone.utc)
     total = 0
-    for table, column, days in _RETENTION:
+    for label, table, column, days, predicate in _RETENTION:
         cutoff = now - timedelta(days=days)
         try:
             with engine.begin() as conn:
                 _ensure_writable(conn)
                 result = conn.execute(
-                    text(f"DELETE FROM {table} WHERE {column} < :cutoff"),
+                    text(f"DELETE FROM {table} WHERE {column} < :cutoff {predicate}"),
                     {"cutoff": cutoff},
                 )
                 deleted = result.rowcount or 0
                 total += deleted
-                logger.info("Pruned %d rows from %s (older than %d days)", deleted, table, days)
+                logger.info("Pruned %d rows from %s (older than %d days)", deleted, label, days)
         except Exception as exc:  # noqa: BLE001 — never fail the job over pruning
-            logger.warning("Prune of %s skipped (%s)", table, exc)
+            logger.warning("Prune of %s skipped (%s)", label, exc)
     logger.info("Prune complete: %d rows deleted", total)
     return total
 

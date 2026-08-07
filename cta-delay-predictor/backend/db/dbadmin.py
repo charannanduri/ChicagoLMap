@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_RETENTION_DAYS = 7
 DELETE_BATCH = 20_000
 
+# Never clear the read-only guard while the database is still this large — that
+# guard is what stops a full disk, and defeating it while over quota would turn
+# a recoverable problem into an unrecoverable one.
+SAFE_SIZE_MB = 500
+
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
@@ -272,6 +277,39 @@ def recover() -> None:
             ))
 
     _phase("Phase 3: DROP arrival_snapshots.raw_json", drop_raw_json)
+
+    # Phase 4 — prune to the current retention policy (this is what keeps the
+    # unlabelled model_features rows, ~96% of that table, from accumulating).
+    def run_prune() -> None:
+        from backend.etl.prune import prune as _prune
+        _prune()
+
+    _phase("Phase 4: prune to retention policy", run_prune)
+
+    # Phase 5 — restore write access.
+    #
+    # Freeing space is not enough on its own: the read-only flag is set at the
+    # database level and stays set until it is explicitly cleared, so every new
+    # session keeps starting read-only. Clearing it is the documented remedy
+    # once usage is back under the limit — and we verify that first, so the
+    # guard is never lifted while the database is still over quota.
+    def restore_write_access() -> None:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            size = conn.execute(text("SELECT pg_database_size(current_database())")).scalar() or 0
+            size_mb = size / (1024 * 1024)
+            _log(f"    database size: {size_mb:.0f} MB")
+            if size_mb >= SAFE_SIZE_MB:
+                raise RuntimeError(
+                    f"still {size_mb:.0f} MB (>= {SAFE_SIZE_MB} MB) — refusing to lift "
+                    "read-only while over quota"
+                )
+            dbname = conn.execute(text("SELECT current_database()")).scalar()
+            conn.execute(text(
+                f'ALTER DATABASE "{dbname}" SET default_transaction_read_only = off'
+            ))
+            _log(f"    cleared default_transaction_read_only on {dbname}")
+
+    _phase("Phase 5: restore write access", restore_write_access)
 
     _log("\nRecovery finished — re-running diagnosis:\n")
     diagnose()
