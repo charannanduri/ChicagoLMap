@@ -64,6 +64,35 @@ membership ($99/yr). One-time setup:
 5. When processing finishes (~10 min), open **TestFlight** on your iPhone,
    add yourself as an internal tester in App Store Connect, and install.
 
+## App Store / TestFlight readiness
+
+Handled in this repo:
+
+| Requirement | Status |
+|---|---|
+| **Privacy manifest** (`PrivacyInfo.xcprivacy`) | Declares UserDefaults (`CA92.1`) — the only required-reason API used. CI fails the build if it isn't in the bundle. Without it, uploads raise `ITMS-91053` |
+| **Export compliance** | `ITSAppUsesNonExemptEncryption = NO` (HTTPS only). Stops builds sitting in "Missing Compliance" |
+| **Location purpose string** | `NSLocationWhenInUseUsageDescription` explains the nearest-station feature |
+| **App icon** | 1024×1024, **no alpha channel** (Apple rejects icons with transparency) |
+| **App Transport Security** | Every request is HTTPS; no ATS exceptions needed |
+| **Launch screen** | Generated (`UILaunchScreen_Generation`), required for full-screen layout |
+| **Version / build number** | `MARKETING_VERSION` 1.0, build number from the CI run number so it always increases |
+| **Third-party SDKs** | None — no bundled SDK privacy manifests to chase |
+| **Data attribution** | Credits the CTA and states there is no affiliation |
+
+You still have to do, in App Store Connect:
+
+1. **Register the bundle ID** `com.charannanduri.chicagolmap` (or let the archive step create it — it runs with `-allowProvisioningUpdates`).
+2. **Create the app record.** The upload fails without one; the bundle ID alone is not enough.
+3. **Add yourself as an internal tester.** Internal testers skip Beta App Review entirely, so builds are installable as soon as processing finishes.
+
+Worth knowing before a public App Store release (none of this blocks TestFlight):
+
+- **External testers** — more than internal ones, or anyone outside your team, requires Beta App Review, plus a description and contact details.
+- **Naming and branding** — reviewers are wary of apps that could read as official transit apps. The in-app "not affiliated with or endorsed by the CTA" line helps; keep the App Store name, subtitle and screenshots clear of CTA logos and livery.
+- **CTA API terms** — the Train Tracker licence governs redistribution and attribution. Worth reading before charging for anything or scaling distribution.
+- **Guideline 5.1.1** — location is requested only when you open "Riding a train?", and the app works without it. That is the pattern reviewers expect.
+
 ## Layout
 
 ```

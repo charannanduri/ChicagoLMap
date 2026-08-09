@@ -110,6 +110,21 @@ jobs:
         working-directory: ios
         run: grep -E 'error:' xcodebuild-device.log | head -80 || tail -100 xcodebuild-device.log
 
+      # Apple rejects builds that use a "required reason" API without declaring
+      # it. The manifest only counts if it actually ships inside the bundle, so
+      # check rather than assume the project picked it up.
+      - name: Verify privacy manifest is bundled
+        working-directory: ios
+        run: |
+          APP=build-device/Build/Products/Release-iphoneos/ChicagoLMap.app
+          if [ ! -f "$APP/PrivacyInfo.xcprivacy" ]; then
+            echo "::error::PrivacyInfo.xcprivacy is not in the app bundle — App Store upload would raise ITMS-91053"
+            ls -la "$APP" || true
+            exit 1
+          fi
+          echo "Privacy manifest bundled:"
+          plutil -p "$APP/PrivacyInfo.xcprivacy" | head -20
+
       - name: Package unsigned .ipa
         working-directory: ios
         run: |
