@@ -26,6 +26,11 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
         INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Your location is used to suggest the nearest stations and trains when you board."
+        # The app only talks HTTPS, which is exempt from export-compliance
+        # rules. Declaring that up front stops every TestFlight build landing in
+        # "Missing Compliance" and waiting on a manual answer before testers can
+        # install it.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         GENERATE_INFOPLIST_FILE: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Apple requires this manifest for any app using a "required reason" API.
+      Omitting it produces ITMS-91053 on upload and blocks App Store review.
+
+      This app uses exactly one such API: UserDefaults, via @AppStorage, to
+      remember the arrival-time display preference. Reason CA92.1 covers reading
+      and writing values that belong only to this app.
+    -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+    </array>
+
+    <!--
+      Nothing is collected. Location never leaves the device — it is used only
+      in memory to sort nearby stations — and the accuracy feedback we do send
+      carries a run number, station and a minute offset, none of which identify
+      a person or device.
+    -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array/>
+
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+</dict>
+</plist>

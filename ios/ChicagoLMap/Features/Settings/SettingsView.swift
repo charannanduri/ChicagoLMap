@@ -78,6 +78,13 @@ struct SettingsView: View {
                 .foregroundStyle(Theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
+            // Attribution for the upstream data, and a plain statement that we
+            // are not affiliated with the CTA.
+            Text("Live arrival data from the Chicago Transit Authority. Not affiliated with or endorsed by the CTA.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondaryText.opacity(0.8))
+                .fixedSize(horizontal: false, vertical: true)
+
             Divider().overlay(Color.white.opacity(0.08))
 
             colophon
