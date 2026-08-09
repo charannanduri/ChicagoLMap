@@ -514,6 +514,21 @@
         }
         .modal-section p:last-child { margin-bottom: 0; }
 
+        /* Colophon */
+        .modal-colophon {
+            margin-top: 22px; padding-top: 14px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            font-size: 11.5px; line-height: 1.6; text-align: center;
+            color: rgba(255,255,255,0.38);
+        }
+        .modal-colophon a {
+            color: rgba(255,255,255,0.72);
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255,255,255,0.22);
+            transition: color 0.15s ease, border-color 0.15s ease;
+        }
+        .modal-colophon a:hover { color: #fff; border-bottom-color: rgba(255,255,255,0.6); }
+
         /* Legend rows */
         .legend-row {
             display: flex; align-items: center; gap: 10px;
@@ -772,6 +787,13 @@
         <div class="modal-section">
             <div class="modal-section-title">Service alerts</div>
             <div id="alerts-body"><div class="alerts-msg">Loading alerts…</div></div>
+        </div>
+
+        <!-- Colophon -->
+        <div class="modal-colophon">
+            Built in Chicago by
+            <a href="https://linkedin.com/in/charannanduri" target="_blank" rel="noopener noreferrer">Charan Nanduri</a>,
+            with a little help from my friend Claude · 2026
         </div>
     </div>
 </div>
