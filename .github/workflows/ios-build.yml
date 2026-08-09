@@ -221,6 +221,11 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
+          # Fail with something readable if archiving quietly produced nothing.
+          if [ ! -d build/ChicagoLMap.xcarchive ]; then
+            echo "::error::No archive was produced — check the Archive step above."
+            exit 1
+          fi
           xcodebuild \
             -exportArchive \
             -archivePath build/ChicagoLMap.xcarchive \
@@ -229,3 +234,27 @@ jobs:
             -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Summarise the upload
+        if: success()
+        run: |
+          {
+            echo "### Uploaded to TestFlight :rocket:"
+            echo ""
+            echo "- **Version** 1.0 (build **${{ github.run_number }}**)"
+            echo "- **Commit** \`${GITHUB_SHA:0:8}\`"
+            echo ""
+            echo "Apple takes roughly 5–15 minutes to finish processing."
+            echo "It then appears in TestFlight on any device signed in as an internal tester."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload archive on failure for debugging
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-archive-logs
+          path: |
+            ios/build/ChicagoLMap.xcarchive/Info.plist
+            ios/ExportOptions.plist
+          retention-days: 14
+          if-no-files-found: ignore
