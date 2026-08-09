@@ -71,16 +71,35 @@ struct SettingsView: View {
     // MARK: - About
 
     private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             sectionTitle("About")
             Text("Chicago 'L' Live shows every train on the map in real time, with machine-learned delay predictions from live data collected around the clock.")
                 .font(.caption)
                 .foregroundStyle(Theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            colophon
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlass(in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var colophon: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Markdown in a SwiftUI Text renders the link and makes it tappable.
+            Text("Built in Chicago by [Charan Nanduri](https://linkedin.com/in/charannanduri), with a little help from my friend Claude.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondaryText)
+                .tint(.white.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("2026")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondaryText.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func sectionTitle(_ text: String) -> some View {
