@@ -55,6 +55,43 @@ class DelayPredictor:
     def is_ready(self) -> bool:
         return self._loaded
 
+    def predict_many(self, feature_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Predict for many feature vectors at once.
+
+        One DataFrame and one call per model, rather than per row — the map
+        prices every train on every poll, so the per-call overhead of predict()
+        would dominate at ~150 trains.
+        """
+        if not feature_rows:
+            return []
+        if not self._loaded:
+            return [
+                {"delay_minutes": None, "delay_status": None,
+                 "p10_minutes": None, "p90_minutes": None}
+                for _ in feature_rows
+            ]
+
+        df = pd.DataFrame(feature_rows).reindex(columns=ALL_FEATURES)
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.fillna(0)
+
+        delays = self._reg.predict(df)
+        classes = self._cls.predict(df)
+        p10s = self._p10.predict(df)
+        p90s = self._p90.predict(df)
+
+        return [
+            {
+                "delay_minutes": round(float(delays[i]), 2),
+                "delay_status": self._inv_label.get(int(classes[i]), "on_time"),
+                "p10_minutes": round(float(p10s[i]), 2),
+                "p90_minutes": round(float(p90s[i]), 2),
+            }
+            for i in range(len(feature_rows))
+        ]
+
     def predict(self, feature_row: dict[str, Any]) -> dict[str, Any]:
         """
         Predict delay for one feature vector.

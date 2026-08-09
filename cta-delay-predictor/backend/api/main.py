@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import feedback, health, runs, stations
+from backend.api.routes import feedback, health, predict, runs, stations
 from backend.db.init_db import init_db
 from backend.ml.predict import DelayPredictor
 
@@ -52,3 +52,4 @@ app.include_router(health.router, tags=["ops"])
 app.include_router(stations.router, tags=["arrivals"])
 app.include_router(runs.router, tags=["arrivals"])
 app.include_router(feedback.router, tags=["feedback"])
+app.include_router(predict.router, tags=["predictions"])
