@@ -86,6 +86,35 @@ def main() -> None:
         state["run_number"] = run
         return f"{len(trains)} trains, source={data.get('position_source')}"
 
+    @check("map: trains carry the data the animation needs")
+    def _():
+        status, data = _get(f"{MAP_URL}/api/trains/red")
+        assert status == 200, f"HTTP {status}"
+        trains = data.get("trains", [])
+        assert trains, "no trains returned"
+        # Smooth motion needs a next station and a time to reach it.
+        usable = [t for t in trains if t.get("next_sta_id") and t.get("eta_seconds") is not None]
+        assert usable, "no train has both next_sta_id and eta_seconds — markers cannot glide"
+        predicted = [t for t in trains if t.get("predicted_eta_seconds") is not None]
+        state["predicted_count"] = len(predicted)
+        detail = f"{len(usable)}/{len(trains)} animatable, {len(predicted)} using our predicted ETA"
+        assert predicted, detail + " — batch predictions are not reaching the map"
+        return detail
+
+    @check("predictor: POST /predict/batch prices trains in bulk")
+    def _():
+        status, data = _post(f"{PREDICTOR_URL}/predict/batch", {"trains": [
+            {"run_number": "825", "route": "Red", "station_id": "40900",
+             "direction": "1", "eta_seconds": 180},
+            {"run_number": "826", "route": "Blue", "station_id": "40010",
+             "direction": "5", "eta_seconds": 420},
+        ]})
+        assert status == 200, f"HTTP {status}: {data}"
+        results = data.get("results", [])
+        assert len(results) == 2, f"expected 2 results, got {len(results)}"
+        assert all(r.get("delay_minutes") is not None for r in results), f"null delays: {results}"
+        return f"delays={[r['delay_minutes'] for r in results]}"
+
     @check("predictor: /health reports model + db ready")
     def _():
         status, data = _get(f"{PREDICTOR_URL}/health")

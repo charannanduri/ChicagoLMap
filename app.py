@@ -337,6 +337,8 @@ def api_get_trains(route):
             train_data = get_train_positions_via_arrivals(CTA_API_KEY, route_lower, station_map)
             position_source = "schedule"
 
+    _attach_predicted_eta(train_data)
+
     return jsonify({
         "route":           route_lower,
         "trains":          train_data,
@@ -468,6 +470,63 @@ def _shift_iso(arr_t: str | None, delay_min) -> str | None:
         except (ValueError, TypeError):
             continue
     return None
+
+
+_ROUTE_TO_ARRIVALS_KEY = {
+    "red": "Red", "blue": "Blue", "g": "G", "brn": "Brn",
+    "o": "Org", "p": "P", "pnk": "Pink", "y": "Y",
+}
+
+
+def _attach_predicted_eta(trains: list[dict]) -> None:
+    """
+    Add our ML-predicted arrival to each live train, in place.
+
+    The map animates trains toward their next stop using `predicted_eta_seconds`
+    when we have a prediction, so the motion reflects when we think the train
+    will *actually* arrive rather than the CTA's raw estimate. Every train is
+    priced in a single batch call — one request per poll, not one per train.
+
+    Degrades silently: without a prediction the map falls back to `eta_seconds`.
+    """
+    if not DELAY_PREDICTOR_URL or not trains:
+        return
+
+    payload = {"trains": [
+        {
+            "run_number": str(t.get("run_number") or ""),
+            "route": _ROUTE_TO_ARRIVALS_KEY.get((t.get("route") or "").lower(), t.get("route")),
+            "station_id": str(t.get("next_sta_id") or ""),
+            "direction": str(t.get("direction_code") or ""),
+            "eta_seconds": t.get("eta_seconds"),
+            "is_delayed": bool(t.get("is_delayed")),
+            "is_scheduled": bool(t.get("is_scheduled")),
+        }
+        for t in trains
+    ]}
+
+    try:
+        resp = _requests.post(
+            f"{DELAY_PREDICTOR_URL}/predict/batch", json=payload, timeout=(3.05, 8)
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+    except Exception as exc:
+        logging.warning("Batch prediction failed: %s", exc)
+        return
+
+    by_run = {str(r.get("run_number") or ""): r for r in results}
+    for t in trains:
+        pred = by_run.get(str(t.get("run_number") or ""))
+        if not pred:
+            continue
+        delay = pred.get("delay_minutes")
+        t["model_delay_minutes"] = delay
+        t["delay_status"] = pred.get("delay_status")
+        eta = t.get("eta_seconds")
+        if delay is not None and eta is not None:
+            # Never let a prediction pull an arrival into the past.
+            t["predicted_eta_seconds"] = max(0, int(round(eta + delay * 60)))
 
 
 def _predictor_run(run_number: str) -> dict[int, dict]:

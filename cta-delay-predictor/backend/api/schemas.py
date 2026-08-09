@@ -58,6 +58,31 @@ class HealthResponse(BaseModel):
     snapshot_count: int
 
 
+class BatchPredictItem(BaseModel):
+    """One live train, as reported by the CTA positions feed."""
+    run_number: Optional[str] = None
+    route: Optional[str] = None        # arrivals-style key, e.g. "Red"
+    station_id: Optional[str] = None   # the train's NEXT station (mapid)
+    direction: Optional[str] = None
+    eta_seconds: Optional[float] = None
+    is_delayed: bool = False
+    is_scheduled: bool = False
+
+
+class BatchPredictRequest(BaseModel):
+    trains: list[BatchPredictItem]
+
+
+class BatchPredictResult(BaseModel):
+    run_number: Optional[str]
+    delay_minutes: Optional[float]
+    delay_status: Optional[str]
+
+
+class BatchPredictResponse(BaseModel):
+    results: list[BatchPredictResult]
+
+
 class FeedbackRequest(BaseModel):
     run_number: Optional[str] = None
     station_id: Optional[str] = None

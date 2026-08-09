@@ -74,6 +74,24 @@ def _eta_minutes(arr_t_str: str | None) -> int | None:
     return None
 
 
+def _eta_seconds(arr_t_str: str | None) -> int | None:
+    """Seconds from now until a CTA arrival time.
+
+    Same parsing as _eta_minutes but without rounding to whole minutes — the
+    map animates a train toward its next stop over exactly this interval, and
+    minute-granularity would make the motion visibly step.
+    """
+    if not arr_t_str:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y%m%d %H:%M:%S"):
+        try:
+            arr_dt = _CHICAGO.localize(datetime.strptime(arr_t_str, fmt))
+            return max(0, int((arr_dt - datetime.now(_CHICAGO)).total_seconds()))
+        except ValueError:
+            continue
+    return None
+
+
 def _as_list(v) -> list:
     """CTA JSON wraps single-element arrays as plain objects; normalise."""
     if v is None:
@@ -154,6 +172,9 @@ def get_train_positions(api_key: str, route: str) -> list[dict]:
             "dest_name":       t.get("destNm"),
             "direction_code":  _to_int(t.get("trDr")),
             "arrival_time":    t.get("arrT"),
+            # Seconds until this train reaches next_sta_id — drives the map's
+            # smooth motion between polls.
+            "eta_seconds":     _eta_seconds(t.get("arrT")),
             "position_source": "gps",
         })
 
@@ -251,6 +272,8 @@ def get_train_positions_via_arrivals(
                 "direction_code":  a["direction_code"],
                 "arrival_time":    a["arrival_time"],
                 "eta_minutes":     a["eta_minutes"],   # used for closest-station selection
+                "eta_seconds":     _eta_seconds(a["arrival_time"]),
+                "next_sta_id":     mapid,
                 "position_source": "schedule",
             })
         return results

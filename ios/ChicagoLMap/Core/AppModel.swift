@@ -3,6 +3,10 @@ import Observation
 
 @Observable @MainActor
 final class AppModel {
+    /// Seconds between live-position polls. The map animates train markers over
+    /// exactly this interval, so the two must stay in step.
+    static let pollInterval: TimeInterval = 15
+
     // MARK: Observed state
 
     var selectedLines: Set<CTALine> = Set(CTALine.allCases)
@@ -49,7 +53,7 @@ final class AppModel {
         while !Task.isCancelled {
             await refreshTrains()
             do {
-                try await Task.sleep(for: .seconds(15))
+                try await Task.sleep(for: .seconds(Self.pollInterval))
             } catch {
                 break
             }

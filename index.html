@@ -282,6 +282,22 @@
         }
         .train-wrap:hover { filter: brightness(1.3) drop-shadow(0 0 6px var(--lc)); }
 
+        /* Train popup: next-stop ETA + estimated-position note */
+        .tp-eta {
+            font-weight: 700; font-variant-numeric: tabular-nums;
+            color: rgba(255,255,255,0.85);
+        }
+        .tp-eta-ml {
+            /* Our prediction, not the CTA's raw number */
+            color: #30d158;
+        }
+        .tp-note {
+            display: block; margin-top: 8px; padding-top: 7px;
+            border-top: 1px solid rgba(255,255,255,0.10);
+            font-size: 10px; line-height: 1.45;
+            color: rgba(255,255,255,0.42);
+        }
+
         /* ── Station markers ───────────────────────────────────────────────── */
         .station-dot {
             width: 8px; height: 8px; border-radius: 50%;
@@ -788,6 +804,17 @@ const trainLayer     = L.layerGroup().addTo(map);
 // Keeps markers alive across refreshes so we can setLatLng() instead of remove+recreate.
 const liveMarkers = new Map();
 
+// ── Smooth train motion ──────────────────────────────────────────────────────
+// The CTA only tells us where a train is every 15 s, but it also tells us when
+// that train will reach its next station. So rather than jumping markers on each
+// poll, we glide each train along the actual track geometry toward its next stop,
+// timed to arrive exactly at its ETA. Each poll re-plans from ground truth.
+const routeGeometry       = {};        // routeKey → [ [ [lat,lon], … ], … ]
+const stationCoordsByMapid = new Map(); // mapid → [lat, lon]
+const trainAnim           = new Map();  // marker key → animation plan
+
+let _mapBusy = false;   // suppress marker moves mid zoom/pan animation
+
 let currentRoute      = 'all';
 let currentIntervalId = null;
 
@@ -877,15 +904,36 @@ function trainPopupHTML(route, train) {
     const color  = ROUTE_COLORS[route] || '#fff';
     const name   = ROUTE_NAMES[route]  || route.toUpperCase();
     const dest   = train.dest_name   ? `→ ${train.dest_name}` : '';
-    const next   = train.next_sta_name ? `<span class="popup-row">Next stop: ${train.next_sta_name}</span>` : '';
     const delay  = train.is_delayed  ? '<span style="color:#ff453a;font-size:11px;margin-top:2px;display:block;">⚠ Delayed</span>' : '';
     const src    = train.position_source === 'schedule'
         ? '<span style="color:rgba(255,214,10,0.7);font-size:10px;">Schedule-based position</span>'
         : '';
+
+    // What it's heading for, and when we think it gets there.
+    let next = '';
+    if (train.next_sta_name) {
+        const secs = train.predicted_eta_seconds != null
+            ? train.predicted_eta_seconds
+            : train.eta_seconds;
+        let when = '';
+        if (secs != null && isFinite(secs)) {
+            const mins = Math.round(secs / 60);
+            const label = secs < 45 ? 'arriving now' : `${mins} min`;
+            const isOurs = train.predicted_eta_seconds != null;
+            when = ` <span class="tp-eta${isOurs ? ' tp-eta-ml' : ''}">${label}</span>`;
+        }
+        next = `<span class="popup-row">Next stop: <strong>${_escHtml(train.next_sta_name)}</strong>${when}</span>`;
+    }
+
+    // Be honest that the marker is an estimate between position updates.
+    const estimated =
+        '<span class="tp-note">Position is estimated — the train is drawn moving ' +
+        'toward its next stop using our predicted arrival time, and snaps back to ' +
+        'the real location each time the CTA reports one.</span>';
+
     return `<span class="popup-title">${name} Line ${dest}</span>` +
            next +
-           `<span class="popup-row">Heading: ${train.heading ?? 0}&deg;</span>` +
-           delay + src +
+           delay + src + estimated +
            `<span class="popup-badge" style="--lc:${color}">${name}</span>`;
 }
 
@@ -1031,6 +1079,25 @@ async function loadRouteLines(routes) {
     try {
         const arg = routes.length === 1 ? routes[0] : 'all';
         const gj  = await fetch(`${API_ROUTE}/${arg}`).then(r => r.json());
+
+        // Keep the raw track geometry: the train animation snaps to it so
+        // markers follow the rails instead of cutting across the city.
+        for (const key of Object.keys(routeGeometry)) delete routeGeometry[key];
+        for (const feat of (gj.features || [])) {
+            const rt = feat.properties && feat.properties.route;
+            const geom = feat.geometry;
+            if (!rt || !geom) continue;
+            const parts = geom.type === 'MultiLineString' ? geom.coordinates
+                        : geom.type === 'LineString'      ? [geom.coordinates]
+                        : [];
+            for (const part of parts) {
+                const latlngs = part
+                    .filter(c => Array.isArray(c) && c.length >= 2)
+                    .map(([lon, lat]) => [lat, lon]);
+                if (latlngs.length >= 2) (routeGeometry[rt] ||= []).push(latlngs);
+            }
+        }
+
         L.geoJSON(gj, {
             style: f => ({
                 color:   ROUTE_COLORS[f.properties.route] || '#fff',
@@ -1068,6 +1135,8 @@ async function loadStations(routes) {
             if (mapid) _placedMapids.add(mapid);
 
             const [lon, lat] = feat.geometry.coordinates;
+            // Needed by the train animation as the target to glide toward.
+            if (mapid) stationCoordsByMapid.set(mapid, [lat, lon]);
             const marker = L.marker([lat, lon], { icon: createStationIcon(color), zIndexOffset: 100 });
 
             if (mapid) {
@@ -1081,6 +1150,174 @@ async function loadStations(routes) {
         }
     }
 }
+
+// ── Track-following interpolation ────────────────────────────────────────────
+// Distances are computed in a flat local projection: over a single city this is
+// accurate to well under a metre and far cheaper than great-circle maths at 25fps.
+
+const _LAT0     = 41.88;                                        // Chicago
+const _M_PER_LAT = 110540;
+const _M_PER_LON = 111320 * Math.cos(_LAT0 * Math.PI / 180);
+
+function _proj(lat, lon) { return [lon * _M_PER_LON, lat * _M_PER_LAT]; }
+function _dist(a, b)     { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+
+/** Nearest point on a polyline → {i, t, d}: segment index, position along it, metres away. */
+function _nearestOnPath(path, lat, lon) {
+    const p = _proj(lat, lon);
+    let best = { i: 0, t: 0, d: Infinity };
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = _proj(path[i][0], path[i][1]);
+        const b = _proj(path[i + 1][0], path[i + 1][1]);
+        const vx = b[0] - a[0], vy = b[1] - a[1];
+        const len2 = vx * vx + vy * vy;
+        let t = len2 ? ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy));
+        if (d < best.d) best = { i, t, d };
+    }
+    return best;
+}
+
+function _atIT(path, i, t) {
+    const a = path[i], b = path[i + 1] || path[i];
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+/** The stretch of track between two snapped points, in travel order. */
+function _subPath(path, from, to) {
+    const pts = [_atIT(path, from.i, from.t)];
+    if (from.i < to.i || (from.i === to.i && from.t <= to.t)) {
+        for (let k = from.i + 1; k <= to.i; k++) pts.push(path[k]);
+    } else {
+        for (let k = from.i; k > to.i; k--) pts.push(path[k]);
+    }
+    pts.push(_atIT(path, to.i, to.t));
+    return pts;
+}
+
+function _cumulative(pts) {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) {
+        cum.push(cum[i - 1] + _dist(_proj(pts[i - 1][0], pts[i - 1][1]), _proj(pts[i][0], pts[i][1])));
+    }
+    return cum;
+}
+
+/** Point (and travel bearing) at a fraction of the path's arc length. */
+function _walk(pts, cum, frac) {
+    const total = cum[cum.length - 1];
+    if (!total) return { latlng: pts[0], bearing: null };
+    const target = Math.max(0, Math.min(total, frac * total));
+    let i = 1;
+    while (i < cum.length - 1 && cum[i] < target) i++;
+    const seg = cum[i] - cum[i - 1];
+    const t = seg ? (target - cum[i - 1]) / seg : 0;
+    const a = pts[i - 1], b = pts[i];
+    const pa = _proj(a[0], a[1]), pb = _proj(b[0], b[1]);
+    return {
+        latlng: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+        bearing: Math.atan2(pb[0] - pa[0], pb[1] - pa[1]) * 180 / Math.PI,
+    };
+}
+
+/**
+ * Work out how a train should move between now and its next stop.
+ * Called once per poll per train; the rAF loop just replays the plan.
+ */
+function planTrainMotion(key, marker, route, train) {
+    const prev = trainAnim.get(key);
+    let start = [train.lat, train.lon];
+
+    // Prefer continuity: if the freshly reported position is close to where we
+    // had already drawn the train, carry on from the drawn position so the
+    // marker never visibly snaps. A large divergence means our guess was wrong,
+    // so the reported position wins.
+    if (prev && prev.rendered) {
+        const drift = _dist(_proj(prev.rendered[0], prev.rendered[1]), _proj(train.lat, train.lon));
+        if (drift < 250) start = prev.rendered;
+    }
+
+    // Prefer OUR predicted arrival over the CTA's raw estimate — the whole point
+    // is that the train moves toward when we think it will actually get there.
+    const eta = Number(
+        train.predicted_eta_seconds != null ? train.predicted_eta_seconds : train.eta_seconds
+    );
+    const dest = train.next_sta_id ? stationCoordsByMapid.get(train.next_sta_id) : null;
+    const heading = train.heading ?? 0;
+
+    // No usable ETA or destination → hold position rather than invent motion.
+    if (!dest || !isFinite(eta) || eta <= 0 || eta > 1800) {
+        marker.setLatLng([train.lat, train.lon]);
+        trainAnim.set(key, { marker, rendered: [train.lat, train.lon], staticPos: true, bearing: heading });
+        return;
+    }
+
+    // Pick the track that best fits both the train and its next station.
+    let best = null, bestScore = Infinity;
+    for (const path of (routeGeometry[route] || [])) {
+        if (path.length < 2) continue;
+        const from = _nearestOnPath(path, start[0], start[1]);
+        const to   = _nearestOnPath(path, dest[0], dest[1]);
+        const score = from.d + to.d;
+        if (score < bestScore) { bestScore = score; best = { path, from, to }; }
+    }
+
+    // Fall back to a straight run if the train doesn't sit near known track.
+    // Otherwise the path begins at the snapped point, so a correction lands the
+    // train back on the rails rather than wherever the raw fix put it.
+    const pts = (best && bestScore < 500)
+        ? _subPath(best.path, best.from, best.to)
+        : [start, dest];
+    if (pts.length) start = pts[0];
+
+    trainAnim.set(key, {
+        marker, pts, cum: _cumulative(pts),
+        startMs: performance.now(), durMs: eta * 1000,
+        rendered: start, bearing: heading,
+    });
+}
+
+// ── Animation loop ───────────────────────────────────────────────────────────
+// Throttled to ~25fps: trains cover very little screen distance per frame, so
+// this is indistinguishable from 60fps while doing a fraction of the DOM work.
+const _FRAME_MS = 40;
+let _lastFrame = 0;
+
+function animateTrains(ts) {
+    requestAnimationFrame(animateTrains);
+    if (_mapBusy || ts - _lastFrame < _FRAME_MS) return;
+    _lastFrame = ts;
+
+    const bounds = map.getBounds().pad(0.25);
+
+    for (const anim of trainAnim.values()) {
+        if (anim.staticPos || !anim.pts) continue;
+
+        const frac = Math.min(1, (ts - anim.startMs) / anim.durMs);
+        const { latlng, bearing } = _walk(anim.pts, anim.cum, frac);
+        anim.rendered = latlng;
+
+        // Off-screen trains keep their computed position but skip the DOM write.
+        if (!bounds.contains(latlng)) continue;
+        anim.marker.setLatLng(latlng);
+
+        // Rotate only on a meaningful turn — the icon has a CSS transition, and
+        // re-triggering it every frame would leave it permanently mid-tween.
+        if (bearing != null && Math.abs(bearing - anim.bearing) > 3) {
+            anim.bearing = bearing;
+            const el = anim.marker.getElement();
+            const wrap = el && el.querySelector('.train-wrap');
+            if (wrap) wrap.style.transform = `rotate(${bearing}deg)`;
+        }
+    }
+}
+requestAnimationFrame(animateTrains);
+
+// Leaflet re-projects every marker during zoom/pan animations; moving them at
+// the same time makes them swim. Sit out those frames.
+map.on('zoomstart movestart', () => { _mapBusy = true; });
+map.on('zoomend moveend',     () => { _mapBusy = false; });
 
 // ── Train diff-update ─────────────────────────────────────────────────────────
 // Core idea: never call clearLayers() on periodic refresh.
@@ -1103,15 +1340,9 @@ function diffUpdateTrains(routeTrainMap) {
             currentKeys.add(key);
 
             if (liveMarkers.has(key)) {
-                // Smooth update — just move the existing marker
+                // Re-plan the glide from fresh data; the rAF loop does the moving.
                 const marker = liveMarkers.get(key);
-                marker.setLatLng([train.lat, train.lon]);
-                // Update heading on the inner wrap without recreating the whole icon
-                const el = marker.getElement();
-                if (el) {
-                    const wrap = el.querySelector('.train-wrap');
-                    if (wrap) wrap.style.transform = `rotate(${train.heading ?? 0}deg)`;
-                }
+                planTrainMotion(key, marker, route, train);
                 // Refresh popup content if it's currently open
                 if (marker.isPopupOpen()) {
                     marker.setPopupContent(trainPopupHTML(route, train));
@@ -1125,6 +1356,7 @@ function diffUpdateTrains(routeTrainMap) {
                 marker.bindPopup(trainPopupHTML(route, train), { maxWidth: 280 });
                 trainLayer.addLayer(marker);
                 liveMarkers.set(key, marker);
+                planTrainMotion(key, marker, route, train);
             }
         }
     }
@@ -1136,6 +1368,7 @@ function diffUpdateTrains(routeTrainMap) {
         if (activeRoutes.has(keyRoute) && !currentKeys.has(key)) {
             trainLayer.removeLayer(marker);
             liveMarkers.delete(key);
+            trainAnim.delete(key);
         }
     }
 
@@ -1147,6 +1380,7 @@ async function fullRefresh(routes) {
     // Clear the stable marker store when switching routes
     for (const [, marker] of liveMarkers) trainLayer.removeLayer(marker);
     liveMarkers.clear();
+    trainAnim.clear();
 
     await Promise.all([
         loadRouteLines(routes),

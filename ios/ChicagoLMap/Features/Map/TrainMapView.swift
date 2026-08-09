@@ -42,9 +42,12 @@ struct TrainMapView: View {
             }
         }
         .mapStyle(.standard(pointsOfInterest: .excludingAll))
-        // Trains are Equatable on id + lat/lon + heading + isDelayed, so markers
-        // glide smoothly between 15 s polls.
-        .animation(.default, value: model.trains)
+        // Trains are Equatable on id + lat/lon + heading + isDelayed, so each poll
+        // animates the markers to their new positions. The duration matches the
+        // poll interval and the curve is linear, so a train is still travelling
+        // when the next position arrives — continuous motion rather than a quick
+        // hop followed by ten seconds of sitting still.
+        .animation(.linear(duration: AppModel.pollInterval), value: model.trains)
         .ignoresSafeArea()
         // Zoom to a station when it's selected (tap on the map or "Board" flow).
         .onChange(of: model.selectedStation) { _, station in
