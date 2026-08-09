@@ -22,7 +22,26 @@ uploads a `ChicagoLMap-Simulator` artifact (a zipped simulator `.app`).
 2. Go to [appetize.io](https://appetize.io) (free tier), upload the zip,
    pick any iPhone, and use the app right in your browser.
 
-### 2. TestFlight on your actual iPhone
+### 2. Sideload onto your iPhone (no Apple Developer Program)
+Every build also uploads **`ChicagoLMap-unsigned-ipa`** — a real device build,
+packaged as an `.ipa`.
+
+It is **unsigned**, so it cannot be installed by itself: iOS only runs signed
+code. Sideloading tools sign it with your own free Apple ID as they install it:
+
+| Tool | Needs a computer? | Notes |
+|---|---|---|
+| [AltStore](https://altstore.io) | Yes, on the same Wi-Fi | Refreshes apps automatically while AltServer runs |
+| [SideStore](https://sidestore.io) | Only for first-time pairing | Refreshes on-device afterwards |
+| [Sideloadly](https://sideloadly.io) | Yes | One-off installs |
+
+Free-Apple-ID limits worth knowing before you start: the app **expires after 7
+days** and must be re-signed, you can have at most 3 sideloaded apps at once,
+and the device must be registered to that Apple ID. A paid Developer account
+raises the signing validity to a year — at which point TestFlight (below) is
+simply the better route.
+
+### 3. TestFlight on your actual iPhone
 Requires an [Apple Developer Program](https://developer.apple.com/programs/)
 membership ($99/yr). One-time setup:
 

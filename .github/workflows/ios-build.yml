@@ -83,6 +83,49 @@ jobs:
           path: ios/artifact
           retention-days: 90
 
+      # ── Unsigned device build → .ipa ────────────────────────────────────────
+      # The simulator .app above cannot run on a real iPhone: wrong architecture
+      # and no signature. This produces a device-architecture .ipa instead.
+      # It is UNSIGNED, so it still can't be installed directly — iOS requires a
+      # signature — but sideloading tools (AltStore, SideStore, Sideloadly) sign
+      # it with your own Apple ID at install time. See ios/README.md.
+      - name: Build unsigned device binary
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ChicagoLMap.xcodeproj \
+            -scheme ChicagoLMap \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee xcodebuild-device.log | grep -E 'error:|BUILD' || true
+          grep -q 'BUILD SUCCEEDED' xcodebuild-device.log
+
+      - name: Show device build errors on failure
+        if: failure()
+        working-directory: ios
+        run: grep -E 'error:' xcodebuild-device.log | head -80 || tail -100 xcodebuild-device.log
+
+      - name: Package unsigned .ipa
+        working-directory: ios
+        run: |
+          # An .ipa is just a zip with the app inside a top-level Payload/ dir.
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R build-device/Build/Products/Release-iphoneos/ChicagoLMap.app Payload/
+          zip -r -q ChicagoLMap-unsigned.ipa Payload
+          ls -lh ChicagoLMap-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChicagoLMap-unsigned-ipa
+          path: ios/ChicagoLMap-unsigned.ipa
+          retention-days: 90
+
   # ── TestFlight upload (manual; needs App Store Connect API key secrets) ──────
   testflight:
     if: github.event_name == 'workflow_dispatch' && inputs.upload_testflight
