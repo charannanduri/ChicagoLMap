@@ -222,7 +222,13 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>upload</string>
+            <!-- Export to a local .ipa, then upload as a separate step. Letting
+                 xcodebuild upload directly makes it contact App Store Connect
+                 during export, which fails with the near-useless "Error
+                 Downloading App Information" if anything is off. Splitting the
+                 two gives a real error message and keeps the signed .ipa even
+                 when the upload fails. -->
+            <key>destination</key><string>export</string>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>manageAppVersionAndBuildNumber</key><false/>
             <key>uploadSymbols</key><true/>
@@ -230,7 +236,7 @@ jobs:
           </plist>
           EOF
 
-      - name: Export and upload to TestFlight
+      - name: Export signed .ipa
         working-directory: ios
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -245,10 +251,43 @@ jobs:
             -exportArchive \
             -archivePath build/ChicagoLMap.xcarchive \
             -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
             -allowProvisioningUpdates \
             -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ls -lh build/export
+
+      # Keep the signed build regardless of whether the upload lands — it is
+      # installable via Apple Configurator and useful for diagnosing failures.
+      - name: Upload signed .ipa artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChicagoLMap-signed-ipa
+          path: ios/build/export/*.ipa
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload to TestFlight
+        working-directory: ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          IPA=$(ls build/export/*.ipa 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::Export produced no .ipa — see the export step above."
+            exit 1
+          fi
+          echo "Uploading $IPA"
+          # altool reads the key from ~/private_keys/AuthKey_<id>.p8 and reports
+          # the actual App Store Connect error (missing app record, duplicate
+          # build number, bad role) rather than a generic export failure.
+          xcrun altool --upload-app --type ios \
+            --file "$IPA" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
 
       - name: Summarise the upload
         if: success()
@@ -263,11 +302,24 @@ jobs:
             echo "It then appears in TestFlight on any device signed in as an internal tester."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload archive on failure for debugging
+      # xcodebuild hides the real reason for distribution failures in a log
+      # bundle under TMPDIR. Print it — it usually names the exact problem.
+      - name: Show distribution logs on failure
+        if: failure()
+        run: |
+          echo "=== xcdistributionlogs ==="
+          for d in "${TMPDIR:-/tmp}"/*.xcdistributionlogs; do
+            [ -d "$d" ] || continue
+            echo "--- $d ---"
+            find "$d" -type f \( -name '*.log' -o -name '*.txt' \) \
+              -exec echo '### {}' \; -exec tail -60 {} \;
+          done || echo "(none found)"
+
+      - name: Upload build metadata on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: testflight-archive-logs
+          name: testflight-failure-logs
           path: |
             ios/build/ChicagoLMap.xcarchive/Info.plist
             ios/ExportOptions.plist
