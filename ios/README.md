@@ -46,8 +46,14 @@ Requires an [Apple Developer Program](https://developer.apple.com/programs/)
 membership ($99/yr). One-time setup:
 
 1. **App Store Connect → Users and Access → Integrations → App Store Connect
-   API** → generate an API key with the **App Manager** role. Note the
-   **Key ID** and **Issuer ID**, download the `.p8` file.
+   API** → generate an API key with the **Admin** role. Note the **Key ID** and
+   **Issuer ID**, download the `.p8` file.
+
+   > The role must be **Admin**, not App Manager. Cloud signing has to create a
+   > cloud-managed *distribution* certificate, and only Admins and the Account
+   > Holder may do that. An App Manager key archives fine and then fails at
+   > export with `Cloud signing permission error` followed by
+   > `No profiles for '<bundle id>' were found`.
 2. **App Store Connect → Apps → “+”** → New App: platform iOS, bundle ID
    `com.charannanduri.chicagolmap` (register the bundle ID at
    developer.apple.com → Identifiers if prompted), any SKU.
