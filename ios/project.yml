@@ -20,7 +20,11 @@ targets:
       - path: ChicagoLMap
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.charannanduri.chicagolmap
+        # Must match the app record in App Store Connect exactly. The suffix
+        # comes from Sideloadly, which rewrites the bundle ID when it signs —
+        # that rewritten ID is the one now registered, so the TestFlight build
+        # has to use it too or the upload cannot find the app.
+        PRODUCT_BUNDLE_IDENTIFIER: com.charannanduri.chicagolmap.34E86E8559
         INFOPLIST_KEY_CFBundleDisplayName: "Chicago L Map"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait"
