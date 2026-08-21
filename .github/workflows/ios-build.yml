@@ -258,11 +258,12 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" 2>&1 | tee export.log
           then
-            # This one is worth calling out by name: it looks like a signing bug
-            # but is purely an API-key role problem, and the raw message doesn't
-            # say so.
-            if grep -qi 'cloud signing permission error' export.log; then
-              echo "::error::The App Store Connect API key lacks permission to create cloud-managed distribution certificates. Regenerate the key with the ADMIN role (App Manager is not enough) and update ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8."
+            # Worth calling out by name: this looks like a signing bug but is
+            # purely an API-key role problem. The telling phrase is only in the
+            # xcdistributionlogs bundle, not on stdout, so search both.
+            if grep -qi 'cloud signing permission error' export.log 2>/dev/null \
+               || grep -rqi 'cloud signing permission error' "${TMPDIR:-/tmp}"/*.xcdistributionlogs 2>/dev/null; then
+              echo "::error::The App Store Connect API key lacks permission to create cloud-managed DISTRIBUTION certificates — it could only mint an 'Apple Development' certificate. Regenerate the key with the ADMIN role (App Manager is not enough) and update ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8."
             fi
             exit 1
           fi
