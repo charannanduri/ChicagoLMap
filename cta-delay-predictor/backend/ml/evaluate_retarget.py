@@ -34,6 +34,19 @@ logger = logging.getLogger(__name__)
 
 TARGET = "cta_error_minutes"
 MIN_ROWS = 500
+
+# Features the offline table has but the live serving path does not currently
+# populate — stations.py/predict.py send 0 for all four. Training with them and
+# serving without them is train/serve skew, so any skill they carry is skill we
+# do not actually get in production. The "serve-time only" arm below drops them
+# from both train and test, which is the number that honestly describes today's
+# deployment. The gap between the two arms is the prize for wiring them up.
+SKEWED_FEATURES = [
+    "eta_delta_1_min",
+    "eta_delta_2_min",
+    "headway_before_min",
+    "headway_after_min",
+]
 # Errors beyond this are almost always a mis-joined arrival rather than a real
 # CTA miss; keeping them would let a handful of rows dominate the loss.
 CLIP_MIN = 20.0
@@ -89,14 +102,23 @@ def main() -> None:
     ridge = Pipeline([("s", StandardScaler()), ("m", Ridge(alpha=1.0))]).fit(X_tr, y_tr)
     mae_ridge = mean_absolute_error(y_te, ridge.predict(X_te))
 
-    xgb = XGBRegressor(
-        n_estimators=400, max_depth=6, learning_rate=0.05,
-        subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=4,
-    ).fit(X_tr, y_tr)
-    pred = xgb.predict(X_te)
-    mae_xgb = mean_absolute_error(y_te, pred)
+    def _fit_xgb(cols: list[str]) -> tuple[XGBRegressor, np.ndarray, float]:
+        m = XGBRegressor(
+            n_estimators=400, max_depth=6, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8, random_state=42, n_jobs=4,
+        ).fit(X_tr[cols], y_tr)
+        p = m.predict(X_te[cols])
+        return m, p, mean_absolute_error(y_te, p)
 
-    skill = (1 - mae_xgb / mae_trust_cta) * 100 if mae_trust_cta else 0.0
+    xgb, _, mae_xgb = _fit_xgb(ALL_FEATURES)
+
+    # What the deployed service can actually do today.
+    serve_cols = [c for c in ALL_FEATURES if c not in SKEWED_FEATURES]
+    xgb_serve, pred, mae_serve = _fit_xgb(serve_cols)
+    xgb_serve_importance = xgb_serve.feature_importances_
+
+    skill = (1 - mae_serve / mae_trust_cta) * 100 if mae_trust_cta else 0.0
+    skill_full = (1 - mae_xgb / mae_trust_cta) * 100 if mae_trust_cta else 0.0
 
     # Product-relevant: how often would the corrected minute differ from the
     # CTA's? This is the number that decides whether the pill earns its place.
@@ -123,10 +145,18 @@ def main() -> None:
     print(f"    trust the CTA (0)     {mae_trust_cta:.3f} min   <- benchmark to beat")
     print(f"    best constant         {mae_constant:.3f} min")
     print(f"    ridge                 {mae_ridge:.3f} min")
-    print(f"    xgboost               {mae_xgb:.3f} min")
+    print(f"    xgboost, all features {mae_xgb:.3f} min   (needs serving work)")
+    print(f"    xgboost, serve-time   {mae_serve:.3f} min   <- what ships today")
     print()
-    print(f"  SKILL vs trusting CTA   {skill:+.1f}%")
+    print(f"  SKILL vs trusting CTA   {skill:+.1f}%   (serve-time features only)")
+    print(f"    if we also wire up {', '.join(SKEWED_FEATURES)}:")
+    print(f"                          {skill_full:+.1f}%")
     print(f"  would change the shown minute for {differs:.1f}% of arrivals")
+    print()
+    imp = sorted(zip(serve_cols, xgb_serve_importance), key=lambda t: -t[1])[:8]
+    print("  TOP FEATURES (serve-time model)")
+    for name, val in imp:
+        print(f"    {name:<26} {val*100:5.1f}%")
     print()
     if skill <= 1:
         print("  VERDICT: no meaningful correction. The CTA's own estimate is as")

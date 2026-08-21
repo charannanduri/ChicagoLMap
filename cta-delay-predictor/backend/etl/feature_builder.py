@@ -75,7 +75,13 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
         # Pre-load actual arrivals for the window into a dict to avoid per-row queries
         actual_window_start = since if since <= datetime.min.replace(tzinfo=timezone.utc) + timedelta(hours=1) else since - timedelta(minutes=5)
         actual_window_end = datetime.now(timezone.utc) + timedelta(hours=1)
-        actuals_by_run_station: dict[tuple[str, str], list[ActualArrival]] = {}
+        # Keyed on direction as well as run+station. CTA run numbers are reused
+        # all service day, so one run visits the same station in both
+        # directions well inside the one-hour match window below; without
+        # direction the earliest-in-window pick can label a southbound
+        # snapshot with a northbound arrival. ActualArrival.direction is
+        # copied verbatim from the snapshot, so the codings agree.
+        actuals_by_run_station: dict[tuple[str, str, str], list[ActualArrival]] = {}
         for a in (
             db.query(ActualArrival)
             .filter(
@@ -85,7 +91,9 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
             .order_by(ActualArrival.actual_arrival_time)
             .all()
         ):
-            actuals_by_run_station.setdefault((a.run_number or "", a.station_id or ""), []).append(a)
+            actuals_by_run_station.setdefault(
+                (a.run_number or "", a.station_id or "", a.direction or ""), []
+            ).append(a)
 
         # Headway lookup: (snapshot_time, station_id, direction) → sorted arr_t list
         headway_lookup: dict[tuple, list] = {}
@@ -133,7 +141,9 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
             snap_end = snap.snapshot_time + timedelta(hours=1)
             actual: ActualArrival | None = next(
                 (
-                    a for a in actuals_by_run_station.get((run, station), [])
+                    a for a in actuals_by_run_station.get(
+                        (run, station, snap.direction or ""), []
+                    )
                     if snap_start <= a.actual_arrival_time <= snap_end
                 ),
                 None,
