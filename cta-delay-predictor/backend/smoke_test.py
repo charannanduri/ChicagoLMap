@@ -24,6 +24,7 @@ PREDICTOR_URL = "https://cta-delay-api.onrender.com"
 TIMEOUT = 45  # generous: free-tier instances cold-start
 
 results: list[tuple[str, bool, bool, str]] = []  # (name, ok, required, detail)
+platform_faults: list[str] = []
 
 
 def _send(req: urllib.request.Request) -> tuple[int, object]:
@@ -41,9 +42,41 @@ def _send(req: urllib.request.Request) -> tuple[int, object]:
         body = exc.read().decode("utf-8", "replace")
         status = exc.code
     try:
-        return status, json.loads(body)
+        parsed: object = json.loads(body)
     except json.JSONDecodeError:
-        return status, body
+        parsed = body
+    fault = _platform_fault(status, parsed)
+    if fault and fault not in platform_faults:
+        platform_faults.append(fault)
+    return status, parsed
+
+
+def _platform_fault(status: int, body: object) -> str | None:
+    """
+    Name the failures that are the hosting platform's, not the application's.
+
+    Both look identical from here -- a status code and some HTML -- but they
+    mean completely different things. A suspended service needs someone to go
+    to the Render dashboard; a Cloudflare bot challenge against a CI runner
+    says nothing about whether real users can reach the site. Reporting either
+    as a bare assertion error makes an infrastructure problem read like a code
+    regression, which is how you end up debugging the wrong thing.
+    """
+    text = body if isinstance(body, str) else json.dumps(body)
+    lowered = text.lower()
+    if status == 503 and "suspended" in lowered:
+        return (
+            "SERVICE SUSPENDED by the host -- not an application error. "
+            "Restore it in the Render dashboard (free-tier instance hours or billing)."
+        )
+    if status == 429 and ("cf_chl" in text or "just a moment" in lowered):
+        return (
+            "Cloudflare bot challenge against this runner's IP -- says nothing "
+            "about whether real browsers can reach the site."
+        )
+    if status == 429:
+        return "Rate limited by the edge, not by the application."
+    return None
 
 
 def _get(url: str) -> tuple[int, object]:
@@ -199,6 +232,14 @@ def main() -> None:
     total = len(results)
     passed = sum(1 for _, ok, _, _ in results if ok)
     print(f"{passed}/{total} checks passed")
+
+    if platform_faults:
+        print()
+        print("  Infrastructure, not application code:")
+        for fault in platform_faults:
+            print(f"    * {fault}")
+        print("  Failures below this line cannot be diagnosed until that is fixed.")
+
     if failed_required:
         print(f"{failed_required} REQUIRED check(s) failed")
         sys.exit(1)
