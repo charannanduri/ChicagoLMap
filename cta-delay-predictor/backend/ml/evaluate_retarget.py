@@ -20,6 +20,7 @@ import logging
 import numpy as np
 import pandas as pd
 import sqlalchemy
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error
 from sklearn.pipeline import Pipeline
@@ -90,8 +91,9 @@ def main() -> None:
     split = max(1, int(len(df) * 0.8))
     train_df, test_df = df.iloc[:split], df.iloc[split:]
 
-    X_tr = train_df[ALL_FEATURES].apply(pd.to_numeric, errors="coerce").fillna(0)
-    X_te = test_df[ALL_FEATURES].apply(pd.to_numeric, errors="coerce").fillna(0)
+    # NaN, not 0 -- matches serving. See backend/ml/serving_features.py.
+    X_tr = train_df[ALL_FEATURES].apply(pd.to_numeric, errors="coerce")
+    X_te = test_df[ALL_FEATURES].apply(pd.to_numeric, errors="coerce")
     y_tr, y_te = train_df[TARGET].values, test_df[TARGET].values
 
     # The benchmark: assume the CTA is exactly right.
@@ -99,7 +101,12 @@ def main() -> None:
     # A second reference: the best constant, i.e. a systematic bias correction.
     mae_constant = mean_absolute_error(y_te, np.full_like(y_te, np.median(y_tr)))
 
-    ridge = Pipeline([("s", StandardScaler()), ("m", Ridge(alpha=1.0))]).fit(X_tr, y_tr)
+    # Ridge cannot express "unknown"; XGBoost takes NaN directly.
+    ridge = Pipeline([
+        ("i", SimpleImputer(strategy="median")),
+        ("s", StandardScaler()),
+        ("m", Ridge(alpha=1.0)),
+    ]).fit(X_tr, y_tr)
     mae_ridge = mean_absolute_error(y_te, ridge.predict(X_te))
 
     def _fit_xgb(cols: list[str]) -> tuple[XGBRegressor, np.ndarray, float]:

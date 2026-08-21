@@ -76,22 +76,37 @@ def backfill() -> int:
 
     logger.info("Backfilling ids %d..%d in chunks of %d", lo_id, hi_id, CHUNK)
     total = 0
+    skipped: list[tuple[int, int]] = []
     lo = lo_id
     while lo <= hi_id:
         hi = lo + CHUNK
-        try:
-            with engine.begin() as conn:
-                _ensure_writable(conn)
-                result = conn.execute(text(_SQL), {"lo": lo, "hi": hi})
-                updated = result.rowcount or 0
-            total += updated
-            if updated:
-                logger.info("  ids %d..%d → %d rows (%d total)", lo, hi, updated, total)
-        except Exception as exc:  # noqa: BLE001 — one bad chunk shouldn't end the run
-            logger.warning("  chunk %d..%d failed: %s", lo, hi, exc)
+        # The pooler drops a connection now and then. One retry turns a
+        # transient blip into a non-event; a chunk that fails twice is a real
+        # gap, so it gets recorded rather than quietly lost.
+        for attempt in (1, 2):
+            try:
+                with engine.begin() as conn:
+                    _ensure_writable(conn)
+                    result = conn.execute(text(_SQL), {"lo": lo, "hi": hi})
+                    updated = result.rowcount or 0
+                total += updated
+                if updated:
+                    logger.info("  ids %d..%d → %d rows (%d total)", lo, hi, updated, total)
+                break
+            except Exception as exc:  # noqa: BLE001 — one bad chunk shouldn't end the run
+                if attempt == 1:
+                    logger.warning("  chunk %d..%d failed, retrying: %s", lo, hi, exc)
+                    continue
+                logger.error("  chunk %d..%d failed twice, skipping: %s", lo, hi, exc)
+                skipped.append((lo, hi))
         lo = hi
 
     logger.info("Backfill complete: %d rows recomputed", total)
+    if skipped:
+        logger.error(
+            "%d chunk(s) left unprocessed — re-run to fill them: %s",
+            len(skipped), ", ".join(f"{a}..{b}" for a, b in skipped),
+        )
     return total
 
 

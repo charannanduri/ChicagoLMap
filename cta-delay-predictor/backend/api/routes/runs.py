@@ -54,7 +54,7 @@ def get_run(run_number: str, db: Session = Depends(get_db)):
 
     from backend.collector.cta_client import _parse_cta_dt, _flag
     from backend.api.main import predictor
-    from backend.api.routes.stations import _build_feature_row
+    from backend.ml.serving_features import ArrivalContext, build_feature_row
 
     now = datetime.now(timezone.utc)
     route = None
@@ -72,20 +72,18 @@ def get_run(run_number: str, db: Session = Depends(get_db)):
         arr_t = _parse_cta_dt(eta.get("arrT"))
         prdt = _parse_cta_dt(eta.get("prdt"))
 
-        feat_row = _build_feature_row(
-            {
-                "arr_t": arr_t,
-                "prdt": prdt,
-                "route": route,
-                "direction": direction,
-                "is_scheduled": _flag(eta.get("isSch")),
-                "is_delayed": _flag(eta.get("isDly")),
-                "is_faulty": _flag(eta.get("isFlt")),
-            },
-            station_id,
-            db,
-            [],
-        )
+        # Following one run gives us its whole remaining trip but no station
+        # boards and no prior polls, so history and headway stay NaN.
+        feat_row = build_feature_row(ArrivalContext(
+            station_id=station_id,
+            route=str(route or ""),
+            direction=direction,
+            arr_t=arr_t,
+            prdt=prdt,
+            is_scheduled=_flag(eta.get("isSch")),
+            is_delayed=_flag(eta.get("isDly")),
+            is_faulty=_flag(eta.get("isFlt")),
+        ), now=now)
         prediction = predictor.predict(feat_row)
 
         stops.append(
