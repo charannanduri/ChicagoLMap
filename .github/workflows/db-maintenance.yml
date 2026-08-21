@@ -16,6 +16,7 @@ on:
           - smoke-test
           - backfill-cta-error
           - evaluate-retarget
+          - probe-services
         default: diagnose
 
 env:
@@ -81,3 +82,26 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: pip install -q -r requirements.txt && python -m backend.ml.evaluate_retarget
+
+      # Diagnoses WHY a service is unreachable. Render sets x-render-routing,
+      # which tells a suspended service apart from one that is merely asleep --
+      # a distinction the response body alone does not always make.
+      - name: Probe live services
+        if: inputs.action == 'probe-services'
+        run: |
+          for host in chicagolmap.onrender.com cta-delay-api.onrender.com; do
+            echo "=================================================================="
+            echo "https://$host"
+            echo "=================================================================="
+            curl -sS -o /tmp/body.txt -D /tmp/hdr.txt --max-time 90 \
+              -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36' \
+              "https://$host/" || echo "  curl exit $?"
+            echo "--- status ---"
+            head -1 /tmp/hdr.txt || true
+            echo "--- routing / edge headers ---"
+            grep -iE '^(x-render-routing|server|cf-ray|cf-mitigated|retry-after|content-type):' /tmp/hdr.txt || echo "  (none)"
+            echo "--- body, first 240 bytes ---"
+            head -c 240 /tmp/body.txt || true
+            echo
+            echo
+          done
