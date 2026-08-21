@@ -28,20 +28,32 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from backend.db.session import SessionLocal
-from backend.ml.features import ALL_FEATURES, BOOL_FEATURES, NUMERIC_FEATURES
+from backend.ml.features import (
+    ALL_FEATURES,
+    BOOL_FEATURES,
+    NUMERIC_FEATURES,
+    TARGET_CLIP_MIN,
+    TARGET_REGRESSION,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-TARGET = "cta_error_minutes"
+# Shared with training so the experiment and the shipped model cannot
+# silently diverge on what they predict or where they clip.
+TARGET = TARGET_REGRESSION
+CLIP_MIN = TARGET_CLIP_MIN
 MIN_ROWS = 500
 
-# Features the offline table has but the live serving path does not currently
-# populate — stations.py/predict.py send 0 for all four. Training with them and
-# serving without them is train/serve skew, so any skill they carry is skill we
-# do not actually get in production. The "serve-time only" arm below drops them
-# from both train and test, which is the number that honestly describes today's
-# deployment. The gap between the two arms is the prize for wiring them up.
+# Features whose values differ between the offline table and the live request.
+# The "serve-time only" arm drops them from both train and test, giving the
+# number that honestly describes production.
+#
+# Measured 2026-08-21: they are worth ~1 percentage point of skill (1.333 min
+# MAE without them versus 1.318 with). Serving now computes headways from the
+# station board and reads ETA history in the right order, so the arms have
+# converged -- but keep both, because the day they diverge again is the day
+# this comparison earns its keep.
 SKEWED_FEATURES = [
     "eta_delta_1_min",
     "eta_delta_2_min",
@@ -50,7 +62,6 @@ SKEWED_FEATURES = [
 ]
 # Errors beyond this are almost always a mis-joined arrival rather than a real
 # CTA miss; keeping them would let a handful of rows dominate the loss.
-CLIP_MIN = 20.0
 
 
 def _load() -> pd.DataFrame:

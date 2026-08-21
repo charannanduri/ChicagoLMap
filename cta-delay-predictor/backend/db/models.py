@@ -241,6 +241,10 @@ class ModelFeature(Base):
     # one NEAREST the actual arrival, this is bounded by half the headway and is
     # largely noise; see cta_error_minutes below.
     delay_minutes = Column(Numeric(8, 2))
+    # Bucketed from delay_minutes, so it is timetable-relative like its source.
+    # Not what training reads: the classifier derives its labels from
+    # cta_error_minutes at train time (see ml.features.derive_status), and the
+    # delay_status the API returns is that model's output, not this column.
     delay_status = Column(String(10))  # "ahead" | "on_time" | "behind"
 
     # Target v2 — how wrong the CTA's own live prediction turned out to be:
