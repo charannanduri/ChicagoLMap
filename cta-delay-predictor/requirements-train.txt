@@ -1,0 +1,9 @@
+# Training-only dependencies, on top of the serving set.
+#
+# These run in GitHub Actions (retrain.yml), never on the Render instance, so
+# they are kept out of requirements.txt where they would bloat every deploy
+# and every cold start.
+-r requirements.txt
+
+matplotlib==3.9.3   # evaluation plots written by ml/train.py
+seaborn==0.13.2     # confusion-matrix heatmap

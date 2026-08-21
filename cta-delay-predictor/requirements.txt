@@ -1,3 +1,15 @@
+# Serving dependencies for the cta-delay-api web service.
+#
+# Kept deliberately small: this list is installed on every Render deploy and
+# every cold start, and the service runs on a free instance with 512 MB. It
+# previously carried jupyter, matplotlib, seaborn, pyarrow, lightgbm and
+# alembic -- none of which are imported anywhere the API can reach. Jupyter
+# alone pulls in around a hundred packages, which is a large part of why cold
+# starts were slow enough to need a keep-warm ping.
+#
+# Training extras live in requirements-train.txt; the collector has its own
+# requirements-collector.txt.
+
 # Web framework
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
@@ -5,35 +17,22 @@ uvicorn[standard]==0.32.1
 # Database
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
-alembic==1.14.0
 
 # HTTP client
 httpx==0.27.2
 requests==2.32.3
 
-# Data processing
+# Inference. scikit-learn is required even though no serving module imports
+# it: the saved XGBRegressor/XGBClassifier are the sklearn-API classes, and
+# unpickling them needs sklearn's base classes importable.
 pandas==2.2.3
 numpy==2.1.3
-
-# Notebooks
-jupyter==1.1.1
-matplotlib==3.9.3
-seaborn==0.13.2
-pyarrow==18.1.0      # parquet support for notebook data exports
-
-# Machine learning
 scikit-learn==1.5.2
 xgboost==2.1.3
-lightgbm==4.5.0
 joblib==1.4.2
-
-# Scheduling (collector)
-apscheduler==3.10.4
 
 # Configuration
 pydantic==2.10.3
 pydantic-settings==2.6.1
-
-# Utilities
 python-dotenv==1.0.1
 pytz==2024.2

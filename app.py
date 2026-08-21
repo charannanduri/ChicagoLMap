@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 import logging
 import json
-import threading
-import time
 import zipfile
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
@@ -49,23 +47,21 @@ if not CTA_API_KEY:
 DELAY_PREDICTOR_URL = os.environ.get("DELAY_PREDICTOR_URL", "").rstrip("/")
 
 
-def _keep_predictor_warm() -> None:
-    """
-    Ping the predictor's /health every 10 minutes. Render's free tier spins
-    services down after ~15 min idle, and a cold start takes 30-60 s — far
-    longer than the popup request timeout, so predictions would silently
-    vanish. Keeping it warm while this app is awake avoids that.
-    """
-    while True:
-        try:
-            _requests.get(f"{DELAY_PREDICTOR_URL}/health", timeout=30)
-        except Exception as exc:
-            logging.warning("Predictor keep-warm ping failed: %s", exc)
-        time.sleep(600)
-
-
-if DELAY_PREDICTOR_URL:
-    threading.Thread(target=_keep_predictor_warm, daemon=True).start()
+# There was a keep-warm thread here that pinged the predictor's /health every
+# ten minutes so Render's free tier would not spin it down between requests.
+# It has been removed for two reasons.
+#
+# It was redundant. /api/trains prices every train through the predictor, and
+# the map polls that every 15 seconds, so any open browser already keeps the
+# predictor awake far more effectively than a ten-minute ping.
+#
+# It was also expensive in the one currency that turned out to matter. Render's
+# free allowance is 750 instance-hours per month across the whole account, and
+# two services running concurrently spend two hours of it per hour of wall
+# clock. Pinning the predictor awake whenever this app was awake guaranteed
+# both were up together, and the account was suspended part-way through the
+# month. Cold starts are the cheaper problem, and slimming the predictor's
+# dependencies (see cta-delay-predictor/requirements.txt) shortens those.
 
 # CTA Customer Alerts API (keyless). Cached briefly so we don't hammer it.
 _ALERTS_URL = "https://www.transitchicago.com/api/1.0/alerts.aspx"
