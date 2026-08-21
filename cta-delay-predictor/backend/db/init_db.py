@@ -76,6 +76,12 @@ def _run_migrations() -> None:
             # (the column also stops being written by the collector).
             if _column_exists(conn, "arrival_snapshots", "raw_json"):
                 conn.execute(text("ALTER TABLE arrival_snapshots DROP COLUMN raw_json"))
+
+            # Target v2: the CTA's own prediction error. See models.ModelFeature.
+            if not _column_exists(conn, "model_features", "cta_error_minutes"):
+                conn.execute(text(
+                    "ALTER TABLE model_features ADD COLUMN cta_error_minutes NUMERIC(8,2)"
+                ))
         _migrations_applied = True
     except Exception as exc:  # noqa: BLE001 — never let migrations kill collection
         logger.warning("Skipping schema migrations (%s)", exc)

@@ -142,6 +142,19 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
             delay_min = float(actual.delay_minutes) if actual and actual.delay_minutes is not None else None
             status = _delay_status(delay_min)
 
+            # Target v2 — the CTA's own error on THIS snapshot's prediction.
+            # snap.arr_t is what the CTA said at snapshot_time; comparing it to
+            # when the train actually turned up gives the quantity the product
+            # exists to correct. Unlike delay_minutes (which is copied unchanged
+            # onto every snapshot of an arrival) this varies per snapshot, so a
+            # prediction made 12 minutes out is a different observation from one
+            # made 2 minutes out.
+            cta_error = None
+            if actual is not None and actual.actual_arrival_time is not None:
+                cta_error = round(
+                    (actual.actual_arrival_time - snap.arr_t).total_seconds() / 60, 2
+                )
+
             direction_code = int(snap.direction) if snap.direction and snap.direction.isdigit() else None
 
             # Headway from sorted arr_t list for this snapshot+station+direction
@@ -189,6 +202,7 @@ def build_features(lookback_hours: int | None = _LOOKBACK_HOURS) -> int:
                     headway_after_min=hw_after,
                     delay_minutes=delay_min,
                     delay_status=status,
+                    cta_error_minutes=cta_error,
                 )
             )
             inserted += 1
