@@ -1,0 +1,37 @@
+name: Tests
+
+# Unit tests for the pieces where a silent mistake is invisible in production:
+# the serving feature vector has to match what the model was trained on, and
+# nothing about a mismatch raises an error at runtime.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cta-delay-predictor/requirements-collector.txt
+
+      # No database and no model artifacts needed — these tests are pure
+      # functions over the feature vector.
+      - name: Install dependencies
+        run: pip install -r cta-delay-predictor/requirements-collector.txt pytest
+
+      - name: Run tests
+        working-directory: cta-delay-predictor
+        run: python -m pytest tests/ -q

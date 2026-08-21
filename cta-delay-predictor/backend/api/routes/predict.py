@@ -11,60 +11,17 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-import pytz
 from fastapi import APIRouter
 
 from backend.api.schemas import (
-    BatchPredictItem,
     BatchPredictRequest,
     BatchPredictResponse,
     BatchPredictResult,
 )
-from backend.ml.features import ROUTE_CODE
-from backend.stations import get_station
+from backend.ml.serving_features import ArrivalContext, build_feature_row
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-_TZ = pytz.timezone("America/Chicago")
-
-
-def _feature_row(item: BatchPredictItem, local_dt: datetime) -> dict:
-    """
-    Build a model feature vector from a live position record.
-
-    Mirrors the station-arrivals feature builder, minus the per-run ETA history
-    (the positions feed carries no prior ETAs). Those deltas default to 0, which
-    is what the model already sees for a train it is meeting for the first time.
-    """
-    station_id = item.station_id or ""
-    station = get_station(int(station_id)) if station_id.isdigit() else None
-    route = item.route or ""
-    minutes_until = max(0.0, (item.eta_seconds or 0) / 60.0)
-    direction_code = int(item.direction) if item.direction and str(item.direction).isdigit() else 0
-
-    return {
-        "route_code": ROUTE_CODE.get(route, -1),
-        "stop_sequence": station.stop_sequence if station else 0,
-        "direction_code": direction_code,
-        "hour_of_day": local_dt.hour,
-        "day_of_week": local_dt.weekday(),
-        "month": local_dt.month,
-        "minutes_until_arrival": minutes_until,
-        "time_since_last_update_sec": 0,
-        "eta_delta_1_min": 0,
-        "eta_delta_2_min": 0,
-        "headway_before_min": 0,
-        "headway_after_min": 0,
-        "is_red_line": int(route.lower() == "red"),
-        "is_blue_line": int(route.lower() == "blue"),
-        "is_weekend": int(local_dt.weekday() >= 5),
-        "is_peak_am": int(local_dt.weekday() < 5 and 7 <= local_dt.hour < 9),
-        "is_peak_pm": int(local_dt.weekday() < 5 and 16 <= local_dt.hour < 19),
-        "is_scheduled": int(item.is_scheduled),
-        "is_delayed_flag": int(item.is_delayed),
-        "is_faulty_flag": 0,
-    }
 
 
 @router.post("/predict/batch", response_model=BatchPredictResponse)
@@ -75,8 +32,21 @@ def predict_batch(payload: BatchPredictRequest):
     if not items:
         return BatchPredictResponse(results=[])
 
-    local_dt = datetime.now(timezone.utc).astimezone(_TZ)
-    rows = [_feature_row(item, local_dt) for item in items]
+    # The positions feed carries no prior ETAs and no station board, so the
+    # history and headway features stay NaN here rather than 0 — the model is
+    # told it does not know, not told the trains are evenly spaced.
+    now = datetime.now(timezone.utc)
+    rows = [
+        build_feature_row(ArrivalContext(
+            station_id=item.station_id or "",
+            route=item.route or "",
+            direction=item.direction,
+            eta_seconds=item.eta_seconds,
+            is_scheduled=bool(item.is_scheduled),
+            is_delayed=bool(item.is_delayed),
+        ), now=now)
+        for item in items
+    ]
     predictions = predictor.predict_many(rows)
 
     return BatchPredictResponse(results=[

@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
 from sklearn.metrics import (
     accuracy_score,
@@ -254,9 +255,14 @@ def train() -> None:
     train_df, test_df = _time_split(df)
     logger.info("Train: %d rows, Test: %d rows", len(train_df), len(test_df))
 
-    X_train = train_df[ALL_FEATURES].fillna(0)
+    # Missing values stay NaN rather than becoming 0. Zero is a claim -- "the
+    # ETA did not move", "the trains arrive together" -- and serving genuinely
+    # does not know these for every prediction. XGBoost learns a default split
+    # direction for NaN, so the two sides now agree on what "unknown" means.
+    # See backend/ml/serving_features.py.
+    X_train = train_df[ALL_FEATURES].astype(float)
     y_train = train_df[TARGET_REGRESSION]
-    X_test = test_df[ALL_FEATURES].fillna(0)
+    X_test = test_df[ALL_FEATURES].astype(float)
     y_test = test_df[TARGET_REGRESSION]
 
     # Status labels (map string → int for XGB classifier)
@@ -301,7 +307,14 @@ def train() -> None:
 
     # 2. Ridge regression
     logger.info("Training Ridge regression…")
-    ridge = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=1.0))])
+    # Ridge cannot express "unknown", so it gets median imputation. The
+    # XGBoost models below take NaN directly, which is why they are the ones
+    # that ship.
+    ridge = Pipeline([
+        ("impute", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler()),
+        ("ridge", Ridge(alpha=1.0)),
+    ])
     ridge.fit(X_train, y_train)
     _reg_metrics("ridge", y_test, ridge.predict(X_test))
     joblib.dump(ridge, model_dir / "ridge.joblib")

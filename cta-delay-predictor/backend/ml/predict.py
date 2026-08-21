@@ -24,7 +24,13 @@ settings = get_settings()
 
 
 class DelayPredictor:
-    """Wraps the trained XGBoost models and exposes a single predict() call."""
+    """
+    Wraps the trained XGBoost models and exposes a single predict() call.
+
+    NaN is passed through to the models rather than filled with 0 -- training
+    uses the same convention, so an unknown feature is treated as unknown
+    rather than as a confident zero. See backend/ml/serving_features.py.
+    """
 
     def __init__(self, model_dir: str | None = None) -> None:
         self._dir = Path(model_dir or settings.model_dir)
@@ -75,7 +81,6 @@ class DelayPredictor:
         df = pd.DataFrame(feature_rows).reindex(columns=ALL_FEATURES)
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.fillna(0)
 
         delays = self._reg.predict(df)
         classes = self._cls.predict(df)
@@ -115,7 +120,6 @@ class DelayPredictor:
         df = pd.DataFrame([feature_row]).reindex(columns=ALL_FEATURES)
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.fillna(0)
 
         delay = float(self._reg.predict(df)[0])
         cls_idx = int(self._cls.predict(df)[0])
