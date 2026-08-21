@@ -34,23 +34,29 @@ logger = logging.getLogger(__name__)
 #  * arrival_snapshots is raw input to the ETL, which only ever looks back two
 #    hours. At a true 5-minute cadence across every station this table grows by
 #    tens of MB a day, so it gets a short window.
-#  * model_features rows are only training data once they carry a delay label.
+#  * model_features rows are only training data once they carry a label.
 #    In practice ~96% never get labelled (they were live prediction candidates),
-#    and training explicitly filters on `delay_minutes IS NOT NULL`. So unlabelled
-#    rows expire quickly while labelled ones — the actual training set — are kept
-#    for a year.
+#    so unlabelled rows expire quickly while labelled ones — the actual training
+#    set — are kept for a year.
+#
+#    "Labelled" means EITHER target is present. cta_error_minutes (actual minus
+#    the CTA's own prediction) is what the model is being retargeted onto;
+#    delay_minutes (actual minus timetable) is retained for comparison. Testing
+#    only delay_minutes would delete rows that are training data under the new
+#    target after three days, and arrival_snapshots is pruned at two — so the
+#    loss would be silent and unrecoverable.
 _RETENTION: list[tuple[str, str, str, int, str]] = [
     ("arrival_snapshots", "arrival_snapshots", "snapshot_time", 2, ""),
     ("train_positions", "train_positions", "snapshot_time", 1, ""),
     (
         "model_features (unlabelled)",
         "model_features", "snapshot_time", 3,
-        "AND delay_minutes IS NULL",
+        "AND delay_minutes IS NULL AND cta_error_minutes IS NULL",
     ),
     (
         "model_features (labelled)",
         "model_features", "snapshot_time", 365,
-        "AND delay_minutes IS NOT NULL",
+        "AND (delay_minutes IS NOT NULL OR cta_error_minutes IS NOT NULL)",
     ),
     ("actual_arrivals", "actual_arrivals", "actual_arrival_time", 365, ""),
 ]
