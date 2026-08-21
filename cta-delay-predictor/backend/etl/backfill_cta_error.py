@@ -8,7 +8,8 @@ pruned after two days) — it is recoverable from the feature row itself:
 
 because feature_builder derives minutes_until_arrival as
 (snap.arr_t - snap.snapshot_time). Joining to actual_arrivals on
-(run_number, station_id) with the same window feature_builder uses then gives
+(run_number, station_id, direction) with the same window feature_builder uses
+then gives
 
     cta_error_minutes = actual_arrival_time - arr_t
 
@@ -28,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Walk the table by id range rather than by "WHERE cta_error_minutes IS NULL".
 # Rows with no matching arrival stay NULL forever, so a NULL-filtered loop would
-# reselect them endlessly.
+# reselect them endlessly. The id walk also lets us recompute rows the earlier
+# direction-blind join had already filled in with the wrong arrival.
 CHUNK = 20_000
 
 _SQL = """
@@ -39,6 +41,7 @@ SET cta_error_minutes = ROUND(
              FROM actual_arrivals aa
             WHERE aa.run_number = mf.run_number
               AND aa.station_id = mf.station_id
+              AND COALESCE(aa.direction, '') = COALESCE(mf.direction, '')
               AND aa.actual_arrival_time
                     BETWEEN mf.snapshot_time - INTERVAL '5 minutes'
                         AND mf.snapshot_time + INTERVAL '1 hour'
@@ -48,7 +51,6 @@ SET cta_error_minutes = ROUND(
              + (mf.minutes_until_arrival::double precision * INTERVAL '1 minute'))
       )) / 60.0)::numeric, 2)
 WHERE mf.id >= :lo AND mf.id < :hi
-  AND mf.cta_error_minutes IS NULL
   AND mf.minutes_until_arrival IS NOT NULL
 """
 
@@ -89,7 +91,7 @@ def backfill() -> int:
             logger.warning("  chunk %d..%d failed: %s", lo, hi, exc)
         lo = hi
 
-    logger.info("Backfill complete: %d rows given a cta_error_minutes value", total)
+    logger.info("Backfill complete: %d rows recomputed", total)
     return total
 
 
@@ -128,7 +130,41 @@ def report() -> None:
     print("  A larger spread in v2 is the good outcome: it means the CTA's")
     print("  error carries variation a model can actually learn, where the")
     print("  timetable label was compressed toward zero by construction.")
+    print()
+    _report_join_ambiguity()
     print("=" * 62)
+
+
+def _report_join_ambiguity() -> None:
+    """
+    Quantify how often the match window holds more than one arrival.
+
+    CTA run numbers are reused across the service day, so one run visits a
+    station in both directions inside the one-hour window the label join uses.
+    Matching on direction as well as run+station removes those wrong-trip
+    joins; whatever remains is genuine ambiguity we still label by taking the
+    earliest arrival.
+    """
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            """
+            SELECT COUNT(*) AS groups,
+                   COUNT(*) FILTER (WHERE n > 1) AS ambiguous
+            FROM (
+              SELECT run_number, station_id, direction,
+                     date_trunc('hour', actual_arrival_time) AS hr,
+                     COUNT(*) AS n
+                FROM actual_arrivals
+               GROUP BY 1, 2, 3, 4
+            ) g
+            """
+        )).first()
+    if not row or not row[0]:
+        return
+    groups, ambiguous = row
+    pct = (ambiguous / groups * 100) if groups else 0.0
+    print(f"  run+station+direction hour-buckets     {groups:,}")
+    print(f"  ...holding more than one arrival       {ambiguous:,}  ({pct:.2f}%)")
 
 
 if __name__ == "__main__":
