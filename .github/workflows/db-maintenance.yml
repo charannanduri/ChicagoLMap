@@ -14,6 +14,8 @@ on:
           - diagnose
           - recover
           - smoke-test
+          - backfill-cta-error
+          - evaluate-retarget
         default: diagnose
 
 env:
@@ -59,3 +61,23 @@ jobs:
         if: inputs.action == 'smoke-test'
         working-directory: cta-delay-predictor
         run: python -m backend.smoke_test
+
+      # Fills in the new target for rows written before the column existed.
+      # Safe to re-run: it only touches rows where the value is still NULL.
+      - name: Backfill CTA prediction error
+        if: inputs.action == 'backfill-cta-error'
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -m backend.db.init_db          # adds the column if missing
+          python -m backend.etl.backfill_cta_error
+
+      # Answers the one question that decides the product's core claim.
+      # Trains nothing that ships — reports skill against "trust the CTA".
+      - name: Evaluate the retargeted model
+        if: inputs.action == 'evaluate-retarget'
+        working-directory: cta-delay-predictor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: pip install -q -r requirements.txt && python -m backend.ml.evaluate_retarget

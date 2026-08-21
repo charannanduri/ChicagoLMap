@@ -236,9 +236,19 @@ class ModelFeature(Base):
     headway_before_min = Column(Numeric(8, 2))
     headway_after_min = Column(Numeric(8, 2))
 
-    # Target (NULL for live prediction rows)
+    # Target v1 — actual arrival minus the nearest GTFS timetable slot.
+    # Retained for comparison only. Because the timetable slot is chosen as the
+    # one NEAREST the actual arrival, this is bounded by half the headway and is
+    # largely noise; see cta_error_minutes below.
     delay_minutes = Column(Numeric(8, 2))
     delay_status = Column(String(10))  # "ahead" | "on_time" | "behind"
+
+    # Target v2 — how wrong the CTA's own live prediction turned out to be:
+    # actual_arrival_time minus the arr_t this snapshot was carrying.
+    # Positive means the train arrived later than the CTA said it would.
+    # This is the quantity the product actually corrects, and unlike v1 it
+    # differs for every snapshot of the same arrival.
+    cta_error_minutes = Column(Numeric(8, 2))
 
     __table_args__ = (
         Index("ix_mf_station_time", "station_id", "snapshot_time"),
