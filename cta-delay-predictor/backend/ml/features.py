@@ -39,6 +39,28 @@ BOOL_FEATURES = [
 
 ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES
 
+# Features the offline table has but a live request cannot always produce.
+#
+# The map prices every train from the positions feed, which carries no station
+# board, no previous poll and no prediction timestamp -- so all five of these
+# are unknown there. The station-arrivals path can supply them, but training a
+# model on features one of its two callers never has is train/serve skew, and
+# it is not benign: with these NaN the model predicts about +7 minutes of CTA
+# error for an ordinary train, against a target whose mean is +0.67 and whose
+# p90 is +3.55. XGBoost has almost no training rows where they are missing, so
+# its learned default direction for NaN is arbitrary.
+#
+# SERVING_FEATURES is the intersection every caller can fill.
+UNAVAILABLE_AT_SERVE = [
+    "time_since_last_update_sec",
+    "eta_delta_1_min",
+    "eta_delta_2_min",
+    "headway_before_min",
+    "headway_after_min",
+]
+
+SERVING_FEATURES = [f for f in ALL_FEATURES if f not in UNAVAILABLE_AT_SERVE]
+
 # What the model predicts: how wrong the CTA's own live estimate turns out to
 # be, in minutes, positive meaning the train arrived later than the CTA said.
 #

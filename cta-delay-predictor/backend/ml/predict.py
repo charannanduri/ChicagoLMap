@@ -15,12 +15,20 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from backend.config import get_settings
 from backend.ml.features import ALL_FEATURES, STATUS_LABELS
 
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
+
+def _default_model_dir() -> str:
+    """
+    Read the configured model directory, importing the settings machinery only
+    if we actually need it. A caller that passes an explicit directory -- the
+    map app loading this in-process, for one -- should not have to install
+    pydantic-settings just to load a file from a path it already knows.
+    """
+    from backend.config import get_settings
+    return get_settings().model_dir
 
 
 class DelayPredictor:
@@ -33,7 +41,7 @@ class DelayPredictor:
     """
 
     def __init__(self, model_dir: str | None = None) -> None:
-        self._dir = Path(model_dir or settings.model_dir)
+        self._dir = Path(model_dir) if model_dir else Path(_default_model_dir())
         self._reg = None
         self._cls = None
         self._p10 = None
