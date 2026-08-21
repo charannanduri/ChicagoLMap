@@ -1,11 +1,18 @@
 """
 Offline model training script.
 
+Predicts how wrong the CTA's own live arrival estimate will turn out to be,
+in minutes. The honest benchmark is therefore "trust the CTA exactly" -- i.e.
+predict zero -- and the models below are only worth shipping if they beat it.
+On the most recent evaluation the XGBoost regressor reached 1.333 min MAE
+against that benchmark's 1.663, roughly 20% skill, using only features the
+serving path can actually supply. See backend/ml/evaluate_retarget.py.
+
 Loads labeled rows from model_features, splits by time, trains:
-  1. BaselineMedian  — historical median delay by route × station × hour × weekday/weekend
+  1. BaselineMedian  — historical median error by route × station × hour × weekday/weekend
   2. Ridge regression
   3. XGBoost regressor (primary)
-  4. XGBoost classifier (ahead / on_time / behind)
+  4. XGBoost classifier (ahead / on_time / behind, relative to the CTA estimate)
 
 Saves artifacts to settings.model_dir with joblib.
 
@@ -46,8 +53,9 @@ from backend.ml.features import (
     BOOL_FEATURES,
     NUMERIC_FEATURES,
     STATUS_LABELS,
-    TARGET_CLASSIFICATION,
+    TARGET_CLIP_MIN,
     TARGET_REGRESSION,
+    derive_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,15 +68,14 @@ def _load_data() -> pd.DataFrame:
     # hour_of_day / day_of_week are already in ALL_FEATURES (via NUMERIC_FEATURES);
     # dict.fromkeys deduplicates while preserving order.
     select_cols = list(dict.fromkeys(
-        ALL_FEATURES
-        + [TARGET_REGRESSION, TARGET_CLASSIFICATION, "snapshot_time", "route", "station_id"]
+        ALL_FEATURES + [TARGET_REGRESSION, "snapshot_time", "route", "station_id"]
     ))
     import sqlalchemy
     with SessionLocal() as db:
         result = db.execute(
             sqlalchemy.text(
                 f"SELECT {', '.join(select_cols)} FROM model_features "
-                f"WHERE delay_minutes IS NOT NULL ORDER BY snapshot_time"
+                f"WHERE {TARGET_REGRESSION} IS NOT NULL ORDER BY snapshot_time"
             )
         )
         rows = result.fetchall()
@@ -87,7 +94,20 @@ def _prep(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     df[TARGET_REGRESSION] = pd.to_numeric(df[TARGET_REGRESSION], errors="coerce")
-    return df.dropna(subset=[TARGET_REGRESSION])
+    df = df.dropna(subset=[TARGET_REGRESSION])
+
+    # Drop implausible errors before they dominate the loss, then derive the
+    # three-class label from the same number the regressor is fit on, so the
+    # two heads can never disagree about what the row represents.
+    before = len(df)
+    df = df[df[TARGET_REGRESSION].abs() <= TARGET_CLIP_MIN].copy()
+    if before != len(df):
+        logger.info(
+            "Dropped %d row(s) with |%s| > %.0f min as likely mis-joins",
+            before - len(df), TARGET_REGRESSION, TARGET_CLIP_MIN,
+        )
+    df["delay_status"] = df[TARGET_REGRESSION].map(derive_status)
+    return df
 
 
 def _time_split(df: pd.DataFrame, test_frac: float = 0.2) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -268,8 +288,8 @@ def train() -> None:
     # Status labels (map string → int for XGB classifier)
     label_map = {lbl: i for i, lbl in enumerate(STATUS_LABELS)}
     inv_label_map = {v: k for k, v in label_map.items()}
-    y_train_cls = train_df[TARGET_CLASSIFICATION].map(label_map).fillna(1)
-    y_test_cls = test_df[TARGET_CLASSIFICATION].map(label_map).fillna(1)
+    y_train_cls = train_df["delay_status"].map(label_map).fillna(1)
+    y_test_cls = test_df["delay_status"].map(label_map).fillna(1)
 
     # Inverse-frequency sample weights so the classifier doesn't ignore the
     # minority "ahead" / "behind" classes (on_time typically dominates 70-80%).

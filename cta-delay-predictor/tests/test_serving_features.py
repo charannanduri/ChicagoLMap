@@ -160,3 +160,49 @@ def test_unknown_route_and_station_do_not_raise():
     assert row["route_code"] == -1
     assert math.isnan(row["stop_sequence"])
     assert math.isnan(row["direction_code"])
+
+
+# ---------------------------------------------------------------------------
+# Target semantics
+# ---------------------------------------------------------------------------
+
+from backend.ml.features import (  # noqa: E402
+    AHEAD_THRESHOLD,
+    BEHIND_THRESHOLD,
+    STATUS_LABELS,
+    TARGET_REGRESSION,
+    derive_status,
+)
+
+
+def test_target_is_the_cta_error_not_the_timetable_delay():
+    """
+    The model predicts how wrong the CTA's live estimate will be, because that
+    is the quantity added to the CTA's estimate at serve time. Reverting to
+    delay_minutes would reintroduce both the noise target and the mismatch
+    between the two clocks.
+    """
+    assert TARGET_REGRESSION == "cta_error_minutes"
+
+
+@pytest.mark.parametrize("error_minutes, expected", [
+    (-9.0, "ahead"),
+    (-1.01, "ahead"),
+    (-1.0, "on_time"),    # boundary: strictly less than AHEAD_THRESHOLD is ahead
+    (0.0, "on_time"),
+    (2.0, "on_time"),     # boundary: BEHIND_THRESHOLD itself is still on time
+    (2.01, "behind"),
+    (30.0, "behind"),
+])
+def test_derive_status_buckets(error_minutes, expected):
+    assert derive_status(error_minutes) == expected
+
+
+def test_derive_status_passes_through_unknown():
+    assert derive_status(None) is None
+
+
+def test_status_thresholds_stay_ordered_and_labelled():
+    assert AHEAD_THRESHOLD < BEHIND_THRESHOLD
+    assert set(STATUS_LABELS) == {"ahead", "on_time", "behind"}
+    assert STATUS_LABELS.index("on_time") == 1  # predict.py falls back to index 1
