@@ -5,7 +5,12 @@ services:
     runtime: python
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind "0.0.0.0:$PORT" --workers 2
+    # One worker, not two. This process now loads the delay model
+    # (numpy/pandas/sklearn/xgboost, roughly 220 MB) and a free instance has
+    # 512 MB, so two workers would each hold their own copy and exhaust it.
+    # The app is I/O-bound on CTA API calls, so threads cover the concurrency
+    # that the second worker used to.
+    startCommand: gunicorn app:app --bind "0.0.0.0:$PORT" --workers 1 --threads 8 --worker-class gthread --timeout 60
     plan: free
     envVars:
       - key: PYTHON_VERSION

@@ -46,6 +46,25 @@ if not CTA_API_KEY:
 # When configured, station arrival popups will include ML-based delay forecasts.
 DELAY_PREDICTOR_URL = os.environ.get("DELAY_PREDICTOR_URL", "").rstrip("/")
 
+# Run the model in this process rather than calling the predictor service.
+#
+# Render's free allowance is 750 instance-hours per month across the account,
+# and two services that are up together spend two of those per hour of wall
+# clock -- which is what suspended both of them. /api/trains prices every train
+# on every 15-second poll, so that one call guaranteed the second service was
+# awake whenever anyone had the map open. Doing it here removes that.
+#
+# Set LOCAL_PREDICTOR=off to fall back to the HTTP service without a code
+# change, if the in-process model ever misbehaves on a live instance.
+_LOCAL_PREDICTOR_ENABLED = os.environ.get("LOCAL_PREDICTOR", "on").lower() != "off"
+_local_predictor = None
+if _LOCAL_PREDICTOR_ENABLED:
+    try:
+        import predictor_local as _local_predictor
+    except Exception as exc:  # noqa: BLE001 — must never take the map down
+        logging.warning("In-process predictor import failed: %s", exc)
+        _local_predictor = None
+
 
 # There was a keep-warm thread here that pinged the predictor's /health every
 # ten minutes so Render's free tier would not spin it down between requests.
@@ -485,7 +504,9 @@ def _attach_predicted_eta(trains: list[dict]) -> None:
 
     Degrades silently: without a prediction the map falls back to `eta_seconds`.
     """
-    if not DELAY_PREDICTOR_URL or not trains:
+    if not trains:
+        return
+    if _local_predictor is None and not DELAY_PREDICTOR_URL:
         return
 
     payload = {"trains": [
@@ -501,17 +522,26 @@ def _attach_predicted_eta(trains: list[dict]) -> None:
         for t in trains
     ]}
 
-    try:
-        resp = _requests.post(
-            f"{DELAY_PREDICTOR_URL}/predict/batch", json=payload, timeout=(3.05, 8)
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-    except Exception as exc:
-        logging.warning("Batch prediction failed: %s", exc)
-        return
-
-    by_run = {str(r.get("run_number") or ""): r for r in results}
+    # In-process first; the HTTP service is the fallback, not the default.
+    if _local_predictor is not None and _local_predictor.is_ready():
+        try:
+            by_run = _local_predictor.predict_batch(payload["trains"])
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("In-process batch prediction failed: %s", exc)
+            by_run = {}
+    else:
+        if not DELAY_PREDICTOR_URL:
+            return
+        try:
+            resp = _requests.post(
+                f"{DELAY_PREDICTOR_URL}/predict/batch", json=payload, timeout=(3.05, 8)
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+        except Exception as exc:
+            logging.warning("Batch prediction failed: %s", exc)
+            return
+        by_run = {str(r.get("run_number") or ""): r for r in results}
     for t in trains:
         pred = by_run.get(str(t.get("run_number") or ""))
         if not pred:
