@@ -32,6 +32,7 @@ from backend.ml.features import (
     ALL_FEATURES,
     BOOL_FEATURES,
     NUMERIC_FEATURES,
+    SERVING_FEATURES,
     TARGET_CLIP_MIN,
     TARGET_REGRESSION,
 )
@@ -130,8 +131,9 @@ def main() -> None:
 
     xgb, _, mae_xgb = _fit_xgb(ALL_FEATURES)
 
-    # What the deployed service can actually do today.
-    serve_cols = [c for c in ALL_FEATURES if c not in SKEWED_FEATURES]
+    # What the deployed service can actually do today. SERVING_FEATURES is the
+    # intersection every caller can fill, including the map's positions feed.
+    serve_cols = list(SERVING_FEATURES)
     xgb_serve, pred, mae_serve = _fit_xgb(serve_cols)
     xgb_serve_importance = xgb_serve.feature_importances_
 

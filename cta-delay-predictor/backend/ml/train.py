@@ -52,6 +52,7 @@ from backend.ml.features import (
     ALL_FEATURES,
     BOOL_FEATURES,
     NUMERIC_FEATURES,
+    SERVING_FEATURES,
     STATUS_LABELS,
     TARGET_CLIP_MIN,
     TARGET_REGRESSION,
@@ -65,8 +66,9 @@ settings = get_settings()
 
 
 def _load_data() -> pd.DataFrame:
-    # hour_of_day / day_of_week are already in ALL_FEATURES (via NUMERIC_FEATURES);
-    # dict.fromkeys deduplicates while preserving order.
+    # Selects ALL_FEATURES even though the model fits SERVING_FEATURES: the
+    # extra columns cost nothing to load and keep the retired ones available
+    # for comparison. dict.fromkeys deduplicates while preserving order.
     select_cols = list(dict.fromkeys(
         ALL_FEATURES + [TARGET_REGRESSION, "snapshot_time", "route", "station_id"]
     ))
@@ -194,7 +196,9 @@ def _save_plots(
 
     # ── 1. Feature importance ─────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 6))
-    importances = pd.Series(xgb_reg.feature_importances_, index=ALL_FEATURES)
+    # Indexed by what the model was actually fit on. Using ALL_FEATURES here
+    # would pair 20 labels with 15 importances and raise.
+    importances = pd.Series(xgb_reg.feature_importances_, index=SERVING_FEATURES)
     importances.sort_values().tail(15).plot.barh(ax=ax, color="#4A9EFF")
     ax.set_title("XGBoost Feature Importance (top 15)", fontsize=13, fontweight="bold")
     ax.set_xlabel("Importance score")
@@ -280,9 +284,14 @@ def train() -> None:
     # does not know these for every prediction. XGBoost learns a default split
     # direction for NaN, so the two sides now agree on what "unknown" means.
     # See backend/ml/serving_features.py.
-    X_train = train_df[ALL_FEATURES].astype(float)
+    # SERVING_FEATURES, not ALL_FEATURES: fit only on what every caller can
+    # supply at request time. Training on the five the map cannot produce cost
+    # 0.3 points of skill to drop (19.8% -> 19.5%) and made the map predict
+    # about +7 minutes for every train, because XGBoost had no training rows
+    # where they were missing and its default NaN direction was untrained.
+    X_train = train_df[SERVING_FEATURES].astype(float)
     y_train = train_df[TARGET_REGRESSION]
-    X_test = test_df[ALL_FEATURES].astype(float)
+    X_test = test_df[SERVING_FEATURES].astype(float)
     y_test = test_df[TARGET_REGRESSION]
 
     # Status labels (map string → int for XGB classifier)

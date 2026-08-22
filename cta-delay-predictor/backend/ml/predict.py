@@ -15,25 +15,38 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from backend.config import get_settings
-from backend.ml.features import ALL_FEATURES, STATUS_LABELS
+from backend.ml.features import SERVING_FEATURES
 
 logger = logging.getLogger(__name__)
 
-settings = get_settings()
+
+def _default_model_dir() -> str:
+    """
+    Read the configured model directory, importing the settings machinery only
+    if we actually need it. A caller that passes an explicit directory -- the
+    map app loading this in-process, for one -- should not have to install
+    pydantic-settings just to load a file from a path it already knows.
+    """
+    from backend.config import get_settings
+    return get_settings().model_dir
 
 
 class DelayPredictor:
     """
     Wraps the trained XGBoost models and exposes a single predict() call.
 
-    NaN is passed through to the models rather than filled with 0 -- training
-    uses the same convention, so an unknown feature is treated as unknown
-    rather than as a confident zero. See backend/ml/serving_features.py.
+    The frame is reindexed to SERVING_FEATURES, the columns every caller can
+    actually fill, and in that order -- extra keys are dropped and the order is
+    pinned, so a caller that builds its dict differently cannot silently shift
+    the model's inputs.
+
+    NaN is passed through rather than filled with 0. That is only safe because
+    training uses the same column set; a model fit on features serving lacks
+    will read their absence as a signal it was never taught.
     """
 
     def __init__(self, model_dir: str | None = None) -> None:
-        self._dir = Path(model_dir or settings.model_dir)
+        self._dir = Path(model_dir) if model_dir else Path(_default_model_dir())
         self._reg = None
         self._cls = None
         self._p10 = None
@@ -78,7 +91,7 @@ class DelayPredictor:
                 for _ in feature_rows
             ]
 
-        df = pd.DataFrame(feature_rows).reindex(columns=ALL_FEATURES)
+        df = pd.DataFrame(feature_rows).reindex(columns=SERVING_FEATURES)
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -117,7 +130,7 @@ class DelayPredictor:
                 "p90_minutes": None,
             }
 
-        df = pd.DataFrame([feature_row]).reindex(columns=ALL_FEATURES)
+        df = pd.DataFrame([feature_row]).reindex(columns=SERVING_FEATURES)
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
