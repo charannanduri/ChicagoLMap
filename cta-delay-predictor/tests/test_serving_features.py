@@ -206,3 +206,38 @@ def test_status_thresholds_stay_ordered_and_labelled():
     assert AHEAD_THRESHOLD < BEHIND_THRESHOLD
     assert set(STATUS_LABELS) == {"ahead", "on_time", "behind"}
     assert STATUS_LABELS.index("on_time") == 1  # predict.py falls back to index 1
+
+
+def test_model_is_fit_only_on_features_every_caller_can_fill():
+    """
+    The map prices trains from the positions feed, which has no station board,
+    no previous poll and no prediction timestamp. A model fit on those columns
+    reads their absence as a signal it was never taught: with them NaN it
+    predicted about +7 minutes of CTA error for an ordinary train, against a
+    target whose mean is +0.67. Dropping them costs 0.3 points of skill.
+    """
+    from backend.ml.features import SERVING_FEATURES, UNAVAILABLE_AT_SERVE
+
+    assert set(SERVING_FEATURES).isdisjoint(UNAVAILABLE_AT_SERVE)
+    assert set(SERVING_FEATURES) | set(UNAVAILABLE_AT_SERVE) == set(ALL_FEATURES)
+
+
+def test_the_map_path_can_fill_every_serving_feature():
+    """
+    The batch path has the least information of any caller, so if it can fill
+    SERVING_FEATURES then all of them can. Anything it leaves NaN would be a
+    column the model must not have been trained on.
+    """
+    import math
+
+    from backend.ml.features import SERVING_FEATURES
+
+    row = build_feature_row(
+        ArrivalContext(station_id="40900", route="Red", direction="1", eta_seconds=390),
+        now=NOW,
+    )
+    unfilled = [
+        c for c in SERVING_FEATURES
+        if isinstance(row[c], float) and math.isnan(row[c])
+    ]
+    assert not unfilled, f"map path cannot supply trained features: {unfilled}"
